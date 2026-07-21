@@ -1,0 +1,9 @@
+apiVersion: openbao.open-control-plane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: platform-service-openbao
+    app.kubernetes.io/managed-by: kustomize
+  name: providerconfig-sample
+spec:
+  # TODO(user): Add fields here

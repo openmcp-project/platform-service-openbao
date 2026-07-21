@@ -1,0 +1,47 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - openbao.open-control-plane.io
+  resources:
+  - controlplaneentities
+  - controlplanetrusts
+  - openbaoinstances
+  - policybindings
+  - projectentities
+  - providerconfigs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - openbao.open-control-plane.io
+  resources:
+  - controlplaneentities/finalizers
+  - controlplanetrusts/finalizers
+  - openbaoinstances/finalizers
+  - policybindings/finalizers
+  - projectentities/finalizers
+  - providerconfigs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - openbao.open-control-plane.io
+  resources:
+  - controlplaneentities/status
+  - controlplanetrusts/status
+  - openbaoinstances/status
+  - policybindings/status
+  - projectentities/status
+  - providerconfigs/status
+  verbs:
+  - get
+  - patch
+  - update
