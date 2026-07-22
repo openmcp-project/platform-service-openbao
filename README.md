@@ -4,6 +4,12 @@
 ## Description
 // TODO(user): An in-depth paragraph about your project and overview of use
 
+## Manual acceptance testing
+
+The constrained Vault Enterprise namespace test topology, security boundaries, manual CLI cases, evidence rules, and exit criteria are documented in [docs/manual-vault-namespace-acceptance-tests.md](docs/manual-vault-namespace-acceptance-tests.md).
+
+The current environment uses Vault rather than OpenBao and does not grant root-namespace administration. The plan records this limitation explicitly and tests within an assigned parent namespace plus isolated customer child namespaces.
+
 ## Getting Started
 
 ### Prerequisites
