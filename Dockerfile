@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM golang:1.25 AS builder
+FROM golang:1.26.5 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -26,7 +26,7 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w" -o manager cmd/main.go
+    go build -ldflags="-s -w" -o manager ./cmd/platform-service-openbao
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
