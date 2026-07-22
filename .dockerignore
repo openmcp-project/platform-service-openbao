@@ -9,3 +9,9 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# Re-include embedded CRD manifests used by api/crds/crds.go.
+!api/
+!api/crds/
+!api/crds/manifests/
+!api/crds/manifests/*.yaml
