@@ -7,7 +7,7 @@ on:
 
 permissions: {}
 
-# Serialize main publishes so tag creation and image push never race.
+# Serialize main publishes so image pushes never race.
 concurrency:
   group: publish-main
   cancel-in-progress: false
@@ -21,7 +21,7 @@ jobs:
     name: Build and publish OCI image
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create and push the version tag
+      contents: read # only reads the repo; no git tag is pushed
       packages: write # push the image to GHCR
     steps:
       - name: Clone the code
@@ -29,29 +29,23 @@ jobs:
         with:
           # Full history is required to count commits for the deterministic version.
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
 
-      - name: Compute deterministic version
+      - name: Compute version
         id: version
         run: |
           COUNT="$(git rev-list --count HEAD)"
-          VERSION="v0.0.0-alpha.${COUNT}"
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          # SemVer with build metadata: the commit hash lives after '+'.
+          VERSION="v0.0.0-alpha.${COUNT}+g${SHORT_SHA}"
+          # OCI/Docker tags forbid '+', so the image tag uses the clean
+          # pre-release only; the full '+g<sha>' version and the complete
+          # commit SHA are recorded in OCI labels instead.
+          IMAGE_TAG="v0.0.0-alpha.${COUNT}"
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "Resolved ${VERSION} for commit #${COUNT} (${GITHUB_SHA})"
-
-      - name: Create and push git tag
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
-            echo "Tag ${VERSION} already exists, skipping tag creation"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "${VERSION}" -m "Release ${VERSION}"
-            git push origin "refs/tags/${VERSION}"
-          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -70,8 +64,14 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.image_tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          # Provenance recorded as OCI labels: full '+g<sha>' version and the
+          # complete commit SHA (revision), which tags cannot carry.
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           # Persist the BuildKit layer cache in GitHub Actions cache to speed up
           # future builds (notably the go mod download layer).
           cache-from: type=gha
