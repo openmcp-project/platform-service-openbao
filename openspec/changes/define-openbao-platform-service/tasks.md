@@ -54,7 +54,7 @@
 - [x] 6.2 Add unit tests for deterministic OpenBao object naming and cleanup ownership — `internal/openbao/naming_test.go`
 - [x] 6.3 Add mocked OpenBao client tests for auth mount, role reconciliation, policy existence checks, and failure conditions — via `internal/openbao/fake.go` + PolicyBinding envtest
 - [ ] 6.4 Add reconciler tests for dependency ordering and status propagation across all six CRDs — PolicyBinding covered; other reconcilers pending broader envtest coverage
-- [ ] 6.5 Add integration/e2e validation against an OpenBao test instance proving ServiceAccount JWT login through a `PolicyBinding` role — depends on 2.5 + 4.3/4.4
+- [ ] 6.5 Add integration/e2e validation against an OpenBao test instance proving ServiceAccount JWT login through a `PolicyBinding` role — e2e suite scaffolded in `test/e2e/` (openmcp-testing + testcontainers-go, real Kind + real OpenBao/Vault container); backend smoke test green; Kind orchestration blocked on GHA/native-Linux (Kind-in-Docker-in-Lima env limitation, not a suite bug); JWT login assertion still gated on AccessRequest wiring (task 2.5)
 - [x] 6.6 Verify that no OpenBao tokens are persisted in Kubernetes resources or logs — asserted by `secretExistsInNamespace` invariant test
 - [x] 6.7 Verify that ESO, ServiceAccounts, OpenBao policies, and secret data are not created, modified, or deleted by the service — no such code paths exist; `Client` interface intentionally lacks policy-write methods
 - [ ] 6.8 Run OpenSpec validation once the `openspec` CLI is available in the environment

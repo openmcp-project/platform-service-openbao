@@ -1,0 +1,15 @@
+# OpenBaoInstance for the e2e run. Address is templated in TestMain
+# with the backend container's in-cluster address (http://openbao:8200
+# on the Kind Docker network).
+apiVersion: openbao.open-control-plane.io/v1alpha1
+kind: OpenBaoInstance
+metadata:
+  name: default
+  labels:
+    app.kubernetes.io/name: platform-service-openbao
+    app.kubernetes.io/managed-by: e2e
+spec:
+  address: {{ .OpenBaoAddress }}
+  # Backend runs in dev mode with its self-signed HTTP listener; skip
+  # verification for the test.
+  insecureSkipVerify: true

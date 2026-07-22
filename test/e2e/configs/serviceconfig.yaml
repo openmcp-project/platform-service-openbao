@@ -1,0 +1,20 @@
+# ServiceConfig for the e2e run. Named "openbao" because openmcp-operator
+# passes --provider-name=<PlatformService.metadata.name> automatically,
+# and our PlatformService is called "openbao" (see main_test.go).
+apiVersion: openbao.open-control-plane.io/v1alpha1
+kind: ServiceConfig
+metadata:
+  name: openbao
+  labels:
+    app.kubernetes.io/name: platform-service-openbao
+    app.kubernetes.io/managed-by: e2e
+spec:
+  authMountPrefix: openbao
+  requeueAfter: 10s
+  # e2e-only: use the static-token escape hatch so we don't need to
+  # pre-bootstrap OpenBao's platform JWT auth mount + role. Production
+  # deployments should omit this and rely on the ServiceAccount-JWT
+  # login path.
+  platformCredentialRef:
+    name: openbao-root-token
+    key: token

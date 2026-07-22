@@ -1,0 +1,8 @@
+apiVersion: openbao.open-control-plane.io/v1alpha1
+kind: ProjectEntity
+metadata:
+  name: team-a
+  namespace: project-team-a
+spec:
+  openBaoInstanceRef:
+    name: default

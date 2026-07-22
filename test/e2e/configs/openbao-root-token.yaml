@@ -1,0 +1,17 @@
+# e2e-only credential Secret. Read by the reconciler via
+# ServiceConfig.spec.platformCredentialRef.
+#
+# The value MUST match backend.rootToken (dev-server fixed token).
+# Namespace MUST match the manager pod's namespace ($POD_NAMESPACE),
+# which openmcp-operator sets to openmcp-system.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openbao-root-token
+  namespace: openmcp-system
+  labels:
+    app.kubernetes.io/name: platform-service-openbao
+    app.kubernetes.io/managed-by: e2e
+type: Opaque
+stringData:
+  token: root

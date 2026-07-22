@@ -1,0 +1,15 @@
+# NOTE: ControlPlaneEntity's identity resolution requires AccessRequest
+# access to the target ControlPlane (openspec tasks 2.5, 4.4). The
+# reconciler may still report IdentityResolved=False in that state; the
+# e2e only asserts what the current controller code actually delivers.
+apiVersion: openbao.open-control-plane.io/v1alpha1
+kind: ControlPlaneEntity
+metadata:
+  name: eso-reader
+  namespace: project-team-a
+spec:
+  controlPlaneTrustRef:
+    name: prod
+  serviceAccountRef:
+    name: external-secrets
+    namespace: external-secrets

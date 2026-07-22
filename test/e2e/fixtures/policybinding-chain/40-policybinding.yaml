@@ -1,0 +1,16 @@
+# The PolicyBinding is the one CR whose behaviour the e2e can meaningfully
+# validate end-to-end against a real OpenBao. Regardless of the upstream
+# IdentityResolved gap, the reconciler:
+#   - creates a deterministic OpenBao JWT role per referenced entity
+#   - checks whether policyName exists (True/False/Unknown)
+#   - reports each roleName + authMountPath under status.roles[]
+# The e2e seeds the referenced policy, then asserts the above.
+apiVersion: openbao.open-control-plane.io/v1alpha1
+kind: PolicyBinding
+metadata:
+  name: eso-reader-kv-prod
+  namespace: project-team-a
+spec:
+  controlPlaneEntityRefs:
+    - name: eso-reader
+  policyName: kv-prod-read
