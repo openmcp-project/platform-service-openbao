@@ -62,7 +62,7 @@ func NewControlPlaneEntityReconciler(platform, onboarding *clusters.Cluster, pro
 // obtained through OpenMCP AccessRequests, never by reading implementation
 // detail kubeconfig Secrets directly.
 func (r *ControlPlaneEntityReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	log := logging.FromContextOrDiscard(ctx).WithName("controlplaneentity").WithValues("controlplaneentity", req.NamespacedName.String())
+	log := logging.FromContextOrDiscard(ctx).WithName("controlplaneentity").WithValues("controlplaneentity", req.String())
 	ctx = logging.NewContext(ctx, log)
 
 	ce := &openbaov1alpha1.ControlPlaneEntity{}

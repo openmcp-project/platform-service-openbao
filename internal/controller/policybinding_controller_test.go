@@ -62,7 +62,7 @@ var _ = Describe("PolicyBinding controller", func() {
 
 	It("reports DependencyNotFound when the referenced ControlPlaneEntity is missing", func() {
 		pb := &openbaov1alpha1.PolicyBinding{}
-		pb.Namespace = "default"
+		pb.Namespace = testProviderName
 		pb.Name = "pb-missing-entity"
 		pb.Spec.ControlPlaneEntityRef.Name = "does-not-exist"
 		pb.Spec.PolicyName = "kv-prod-read"
@@ -79,7 +79,7 @@ var _ = Describe("PolicyBinding controller", func() {
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
 		Expect(ready.Reason).To(Equal(openbaov1alpha1.ReasonDependencyNotFound))
 		// spec.md Requirement 7: no token Secret should ever be created.
-		Expect(secretExistsInNamespace(onboardingK8sClient, "default")).To(BeFalse())
+		Expect(secretExistsInNamespace(onboardingK8sClient, testProviderName)).To(BeFalse())
 	})
 
 	It("reports PolicyResolved=False with reason PolicyNotFound when the OpenBao policy is missing", func() {
@@ -95,10 +95,10 @@ var _ = Describe("PolicyBinding controller", func() {
 		// mount + resolved instance in its status, and a
 		// ControlPlaneEntity + PolicyBinding that reference it.
 		trust := &openbaov1alpha1.ControlPlaneTrust{}
-		trust.Namespace = "default"
+		trust.Namespace = testProviderName
 		trust.Name = "trust-policytest"
 		trust.Spec.ProjectEntityRef.Name = "irrelevant-for-this-test"
-		trust.Spec.ProjectEntityRef.Namespace = "default"
+		trust.Spec.ProjectEntityRef.Namespace = testProviderName
 		trust.Spec.ControlPlaneRef.Name = "cp-policytest"
 		Expect(onboardingK8sClient.Create(ctx, trust)).To(Succeed())
 		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), trust) })
@@ -110,16 +110,26 @@ var _ = Describe("PolicyBinding controller", func() {
 		Expect(fake.EnsureJWTAuthMount(ctx, trust.Status.AuthMountPath)).To(Succeed())
 
 		ce := &openbaov1alpha1.ControlPlaneEntity{}
-		ce.Namespace = "default"
+		ce.Namespace = testProviderName
 		ce.Name = "ce-policytest"
 		ce.Spec.ControlPlaneRef.Name = "cp-policytest"
 		ce.Spec.ServiceAccountRef.Name = "eso-reader"
 		ce.Spec.ServiceAccountRef.Namespace = "external-secrets"
 		Expect(onboardingK8sClient.Create(ctx, ce)).To(Succeed())
 		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), ce) })
+		ce.Status.Identity = &openbaov1alpha1.ServiceAccountIdentity{
+			Subject:   "system:serviceaccount:external-secrets:eso-reader",
+			Audiences: []string{"openbao"},
+		}
+		apimeta.SetStatusCondition(&ce.Status.Conditions, metav1.Condition{
+			Type:   openbaov1alpha1.ConditionIdentityResolved,
+			Status: metav1.ConditionTrue,
+			Reason: openbaov1alpha1.ReasonReconciled,
+		})
+		Expect(onboardingK8sClient.Status().Update(ctx, ce)).To(Succeed())
 
 		pb := &openbaov1alpha1.PolicyBinding{}
-		pb.Namespace = "default"
+		pb.Namespace = testProviderName
 		pb.Name = "pb-policytest"
 		pb.Spec.ControlPlaneEntityRef.Name = "ce-policytest"
 		pb.Spec.PolicyName = "kv-prod-read" // NOT in fake.Policies
@@ -143,7 +153,7 @@ var _ = Describe("PolicyBinding controller", func() {
 		_, ok := fake.Role(trust.Status.AuthMountPath, got.Status.RoleName)
 		Expect(ok).To(BeTrue())
 		// spec.md Requirement 7: no token Secret was created.
-		Expect(secretExistsInNamespace(onboardingK8sClient, "default")).To(BeFalse())
+		Expect(secretExistsInNamespace(onboardingK8sClient, testProviderName)).To(BeFalse())
 	})
 })
 

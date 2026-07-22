@@ -65,7 +65,7 @@ func NewProjectEntityReconciler(platform, onboarding *clusters.Cluster, provider
 // contract: DependencyReady tracks the referenced OpenBaoInstance's
 // OpenBaoReachable condition; Ready follows that.
 func (r *ProjectEntityReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	log := logging.FromContextOrDiscard(ctx).WithName("projectentity").WithValues("projectentity", req.NamespacedName.String())
+	log := logging.FromContextOrDiscard(ctx).WithName("projectentity").WithValues("projectentity", req.String())
 	ctx = logging.NewContext(ctx, log)
 
 	pe := &openbaov1alpha1.ProjectEntity{}

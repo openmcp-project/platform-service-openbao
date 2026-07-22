@@ -70,7 +70,7 @@ func NewControlPlaneTrustReconciler(platform, onboarding *clusters.Cluster, prov
 //  6. Discover issuer/JWKS from the referenced ControlPlane status.
 //  7. ConfigureJWTTrust + set status + mark Ready.
 func (r *ControlPlaneTrustReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	log := logging.FromContextOrDiscard(ctx).WithName("controlplanetrust").WithValues("controlplanetrust", req.NamespacedName.String())
+	log := logging.FromContextOrDiscard(ctx).WithName("controlplanetrust").WithValues("controlplanetrust", req.String())
 	ctx = logging.NewContext(ctx, log)
 
 	trust := &openbaov1alpha1.ControlPlaneTrust{}

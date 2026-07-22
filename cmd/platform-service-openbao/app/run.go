@@ -107,12 +107,14 @@ func (o *RunOptions) AddFlags(cmd *cobra.Command) {
 		"Metrics endpoint address. Use :8443 for HTTPS, :8080 for HTTP, or 0 to disable.")
 	cmd.Flags().StringVar(&o.ProbeAddr, "health-probe-bind-address", ":8081", "Health probe endpoint address.")
 	cmd.Flags().StringVar(&o.PprofAddr, "pprof-bind-address", "", "pprof endpoint address (empty to disable).")
-	cmd.Flags().BoolVar(&o.EnableLeaderElection, "leader-elect", false, "Enable leader election so at most one manager is active.")
+	cmd.Flags().BoolVar(&o.EnableLeaderElection, "leader-elect", false,
+		"Enable leader election so at most one manager is active.")
 	cmd.Flags().BoolVar(&o.SecureMetrics, "metrics-secure", true, "Serve metrics over HTTPS.")
 	cmd.Flags().StringVar(&o.WebhookCertPath, "webhook-cert-path", "", "Directory containing the webhook certificate.")
 	cmd.Flags().StringVar(&o.WebhookCertName, "webhook-cert-name", "tls.crt", "Webhook certificate file name.")
 	cmd.Flags().StringVar(&o.WebhookCertKey, "webhook-cert-key", "tls.key", "Webhook key file name.")
-	cmd.Flags().StringVar(&o.MetricsCertPath, "metrics-cert-path", "", "Directory containing the metrics server certificate.")
+	cmd.Flags().StringVar(&o.MetricsCertPath, "metrics-cert-path", "",
+		"Directory containing the metrics server certificate.")
 	cmd.Flags().StringVar(&o.MetricsCertName, "metrics-cert-name", "tls.crt", "Metrics certificate file name.")
 	cmd.Flags().StringVar(&o.MetricsCertKey, "metrics-cert-key", "tls.key", "Metrics key file name.")
 	cmd.Flags().BoolVar(&o.EnableHTTP2, "enable-http2", false, "Enable HTTP/2 on metrics and webhook servers.")
@@ -275,19 +277,40 @@ func (o *RunOptions) Run(ctx context.Context) error {
 
 	// Wire the six reconcilers. Each carries both cluster handles; the
 	// reconciler chooses which cluster's client to use per resource type.
-	if err := controller.NewOpenBaoInstanceReconciler(o.PlatformCluster, o.ProviderName).SetupWithManager(mgr); err != nil {
+	openBaoInstanceReconciler := controller.NewOpenBaoInstanceReconciler(o.PlatformCluster, o.ProviderName)
+	if err := openBaoInstanceReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up OpenBaoInstance controller: %w", err)
 	}
-	if err := controller.NewProjectEntityReconciler(o.PlatformCluster, onboardingCluster, o.ProviderName).SetupWithManager(mgr); err != nil {
+	projectEntityReconciler := controller.NewProjectEntityReconciler(
+		o.PlatformCluster,
+		onboardingCluster,
+		o.ProviderName,
+	)
+	if err := projectEntityReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up ProjectEntity controller: %w", err)
 	}
-	if err := controller.NewControlPlaneTrustReconciler(o.PlatformCluster, onboardingCluster, o.ProviderName).SetupWithManager(mgr); err != nil {
+	controlPlaneTrustReconciler := controller.NewControlPlaneTrustReconciler(
+		o.PlatformCluster,
+		onboardingCluster,
+		o.ProviderName,
+	)
+	if err := controlPlaneTrustReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up ControlPlaneTrust controller: %w", err)
 	}
-	if err := controller.NewControlPlaneEntityReconciler(o.PlatformCluster, onboardingCluster, o.ProviderName).SetupWithManager(mgr); err != nil {
+	controlPlaneEntityReconciler := controller.NewControlPlaneEntityReconciler(
+		o.PlatformCluster,
+		onboardingCluster,
+		o.ProviderName,
+	)
+	if err := controlPlaneEntityReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up ControlPlaneEntity controller: %w", err)
 	}
-	if err := controller.NewPolicyBindingReconciler(o.PlatformCluster, onboardingCluster, o.ProviderName).SetupWithManager(mgr); err != nil {
+	policyBindingReconciler := controller.NewPolicyBindingReconciler(
+		o.PlatformCluster,
+		onboardingCluster,
+		o.ProviderName,
+	)
+	if err := policyBindingReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up PolicyBinding controller: %w", err)
 	}
 

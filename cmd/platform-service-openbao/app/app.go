@@ -80,7 +80,7 @@ func (o *SharedOptions) AddPersistentFlags(cmd *cobra.Command) {
 	o.PlatformCluster.RegisterSingleConfigPathFlag(cmd.PersistentFlags())
 
 	cmd.PersistentFlags().StringVar(&o.Environment, "environment", "",
-		"Environment name. Required. Distinguishes different environments watching the same platform cluster; must be globally unique.")
+		"Environment name. Required. Distinguishes environments watching the same platform cluster.")
 	cmd.PersistentFlags().StringVar(&o.ProviderName, "provider-name", "",
 		"Name of the ServiceConfig resource this instance reconciles against.")
 	cmd.PersistentFlags().BoolVar(&o.DryRun, "dry-run", false,

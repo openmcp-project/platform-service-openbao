@@ -74,7 +74,7 @@ func NewPolicyBindingReconciler(platform, onboarding *clusters.Cluster, provider
 // which is resolved from a short-lived ServiceAccount token obtained through
 // an OpenMCP AccessRequest to the target ControlPlane.
 func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	log := logging.FromContextOrDiscard(ctx).WithName("policybinding").WithValues("policybinding", req.NamespacedName.String())
+	log := logging.FromContextOrDiscard(ctx).WithName("policybinding").WithValues("policybinding", req.String())
 	ctx = logging.NewContext(ctx, log)
 
 	pb := &openbaov1alpha1.PolicyBinding{}
@@ -148,7 +148,7 @@ func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.R
 			"resolved OpenBaoInstance is not reachable")
 		return r.patchStatus(ctx, pb, cfg)
 	}
-	client, err := r.ClientFactory(ctx, inst)
+	baoClient, err := r.ClientFactory(ctx, inst)
 	if err != nil {
 		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
 			openbaov1alpha1.ReasonOpenBaoUnreachable, err.Error())
@@ -156,7 +156,7 @@ func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.R
 	}
 
 	// Policy existence check — never mutating.
-	exists, err := client.PolicyExists(ctx, pb.Spec.PolicyName)
+	exists, err := baoClient.PolicyExists(ctx, pb.Spec.PolicyName)
 	switch {
 	case err != nil:
 		setCondition(&pb.Status.Conditions, pb.Generation, metav1.Condition{
@@ -217,7 +217,7 @@ func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.R
 	if ce.Status.Identity != nil && ce.Status.Identity.Subject != "" {
 		role.BoundSubject = ce.Status.Identity.Subject
 	}
-	if err := client.EnsureJWTRole(ctx, trust.Status.AuthMountPath, role); err != nil {
+	if err := baoClient.EnsureJWTRole(ctx, trust.Status.AuthMountPath, role); err != nil {
 		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
 			openbaov1alpha1.ReasonReconcileError, err.Error())
 		return r.patchStatus(ctx, pb, cfg)
@@ -264,9 +264,9 @@ func (r *PolicyBindingReconciler) reconcileDelete(ctx context.Context, pb *openb
 				return ctrl.Result{}, err
 			}
 			if inst != nil && isInstanceReachable(inst) {
-				client, err := r.ClientFactory(ctx, inst)
+				baoClient, err := r.ClientFactory(ctx, inst)
 				if err == nil {
-					if err := client.DeleteJWTRole(ctx, pb.Status.AuthMountPath, pb.Status.RoleName); err != nil {
+					if err := baoClient.DeleteJWTRole(ctx, pb.Status.AuthMountPath, pb.Status.RoleName); err != nil {
 						return ctrl.Result{}, fmt.Errorf("deleting JWT role: %w", err)
 					}
 				}
