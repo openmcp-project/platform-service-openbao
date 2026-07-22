@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -57,10 +58,9 @@ func NewControlPlaneEntityReconciler(platform, onboarding *clusters.Cluster, pro
 }
 
 // Reconcile validates the existence of the referenced ServiceAccount and
-// publishes a non-sensitive identity summary. Verifying the SA requires
-// AccessRequest-based access to the target ControlPlane — that piece is
-// pending, so this reconciler reports IdentityResolved=False with a
-// specific reason instead of falsely claiming success.
+// publishes a non-sensitive identity summary. Target ControlPlane access is
+// obtained through OpenMCP AccessRequests, never by reading implementation
+// detail kubeconfig Secrets directly.
 func (r *ControlPlaneEntityReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	log := logging.FromContextOrDiscard(ctx).WithName("controlplaneentity").WithValues("controlplaneentity", req.NamespacedName.String())
 	ctx = logging.NewContext(ctx, log)
@@ -84,21 +84,75 @@ func (r *ControlPlaneEntityReconciler) Reconcile(ctx context.Context, req reconc
 	}
 	ce.Status.ObservedGeneration = ce.Generation
 
-	// ServiceAccount existence check requires an AccessRequest-driven
-	// client to the target ControlPlane. Report the specific missing
-	// dependency so operators see the exact blocker.
+	cp, err := getControlPlane(ctx, r.OnboardingCluster.Client(), client.ObjectKey{Namespace: ce.Namespace, Name: ce.Spec.ControlPlaneRef.Name})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if cp == nil {
+		dependencyNotReady(&ce.Status.Conditions, ce.Generation,
+			openbaov1alpha1.ReasonDependencyNotFound,
+			fmt.Sprintf("ControlPlane %q not found in namespace %q", ce.Spec.ControlPlaneRef.Name, ce.Namespace))
+		return r.patchStatus(ctx, ce, cfg)
+	}
+	issuer := controlPlaneIssuer(cp)
+	if issuer == "" {
+		setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionIdentityResolved,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonControlPlaneUnavailable,
+			Message: fmt.Sprintf("ControlPlane %s/%s does not expose service-account-issuer endpoint yet", cp.Namespace, cp.Name),
+		})
+		setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonControlPlaneUnavailable,
+			Message: "Waiting for ControlPlane issuer endpoint",
+		})
+		return r.patchStatus(ctx, ce, cfg)
+	}
+
+	mcpCluster, err := controlPlaneClusterAccess(ctx, r.PlatformCluster, r.ProviderName, cp,
+		serviceAccountIdentityPermissions(ce.Spec.ServiceAccountRef.Namespace))
+	if err != nil {
+		setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionIdentityResolved,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonControlPlaneUnavailable,
+			Message: err.Error(),
+		})
+		setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonControlPlaneUnavailable,
+			Message: "Waiting for ControlPlane access",
+		})
+		return r.patchStatus(ctx, ce, cfg)
+	}
+	identity, identityID, err := resolveServiceAccountIdentity(ctx, mcpCluster,
+		ce.Spec.ServiceAccountRef.Namespace, ce.Spec.ServiceAccountRef.Name, controlPlaneJWTAudience)
+	if err != nil {
+		setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionIdentityResolved,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonControlPlaneUnavailable,
+			Message: err.Error(),
+		})
+		setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonControlPlaneUnavailable,
+			Message: "Could not resolve ServiceAccount identity",
+		})
+		return r.patchStatus(ctx, ce, cfg)
+	}
+	ce.Status.Identity = identity
+	ce.Status.IdentityID = identityID
 	setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
-		Type:    openbaov1alpha1.ConditionIdentityResolved,
-		Status:  metav1.ConditionFalse,
-		Reason:  openbaov1alpha1.ReasonControlPlaneUnavailable,
-		Message: "ControlPlane access via AccessRequest is not yet wired; cannot verify ServiceAccount existence",
+		Type:   openbaov1alpha1.ConditionIdentityResolved,
+		Status: metav1.ConditionTrue,
+		Reason: openbaov1alpha1.ReasonReconciled,
 	})
-	setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
-		Type:    openbaov1alpha1.ConditionReady,
-		Status:  metav1.ConditionFalse,
-		Reason:  openbaov1alpha1.ReasonControlPlaneUnavailable,
-		Message: "Waiting for ControlPlane access",
-	})
+	markReady(&ce.Status.Conditions, ce.Generation)
 	return r.patchStatus(ctx, ce, cfg)
 }
 

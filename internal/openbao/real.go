@@ -102,9 +102,45 @@ func New(cfg Config) (*APIClient, error) {
 	return &APIClient{c: c}, nil
 }
 
+// LoginJWT exchanges a Kubernetes JWT against an OpenBao/Vault JWT auth
+// mount and returns the resulting short-lived OpenBao token. The token is
+// returned only to the caller so it can be placed into an in-memory client;
+// callers must never persist or log it.
+func LoginJWT(ctx context.Context, cfg Config, mount, role, jwt string) (string, error) {
+	if strings.TrimSpace(jwt) == "" {
+		return "", errors.New("openbao: jwt is required")
+	}
+	client, err := New(Config{
+		Address:            cfg.Address,
+		CABundlePEM:        cfg.CABundlePEM,
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+		Namespace:          cfg.Namespace,
+	})
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.c.Logical().WriteWithContext(ctx, "auth/"+strings.Trim(mount, "/")+"/login", map[string]any{
+		"role": role,
+		"jwt":  jwt,
+	})
+	if err != nil {
+		return "", fmt.Errorf("openbao: jwt login via mount %q role %q: %w", mount, role, err)
+	}
+	if resp == nil || resp.Auth == nil || resp.Auth.ClientToken == "" {
+		return "", fmt.Errorf("openbao: jwt login via mount %q role %q returned no token", mount, role)
+	}
+	return resp.Auth.ClientToken, nil
+}
+
 // Health probes /sys/health without altering state.
+//
+// /sys/health is a backend-global endpoint. Vault Enterprise namespaces
+// return 404 "unsupported path" for namespaced health requests, while
+// OpenBao/Vault object operations below still need the configured namespace
+// for auth mounts, roles, and policies. Use a shallow root-namespace client
+// only for the health probe so namespace-scoped reconciliation remains intact.
 func (a *APIClient) Health(ctx context.Context) (HealthInfo, error) {
-	resp, err := a.c.Sys().HealthWithContext(ctx)
+	resp, err := a.c.WithNamespace("").Sys().HealthWithContext(ctx)
 	if err != nil {
 		return HealthInfo{}, fmt.Errorf("openbao: health probe: %w", err)
 	}
@@ -115,20 +151,45 @@ func (a *APIClient) Health(ctx context.Context) (HealthInfo, error) {
 	}, nil
 }
 
-// EnsureJWTAuthMount creates a JWT auth mount at `path` if absent. If the
-// mount already exists with the same type it is left in place — writes to
-// the config endpoint happen separately via ConfigureJWTTrust.
-func (a *APIClient) EnsureJWTAuthMount(ctx context.Context, path string) error {
-	list, err := a.c.Sys().ListAuthWithContext(ctx)
+// EnsureEntity creates or updates an identity entity and returns its canonical ID.
+func (a *APIClient) EnsureEntity(ctx context.Context, name string, metadata map[string]string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", errors.New("openbao: entity name required")
+	}
+	data := map[string]any{"name": name}
+	if len(metadata) > 0 {
+		data["metadata"] = metadata
+	}
+	resp, err := a.c.Logical().WriteWithContext(ctx, "identity/entity/name/"+name, data)
 	if err != nil {
-		return fmt.Errorf("openbao: list auth mounts: %w", err)
+		return "", fmt.Errorf("openbao: ensure identity entity %q: %w", name, err)
 	}
-	// OpenBao returns keys with a trailing slash.
-	if _, ok := list[path+"/"]; ok {
-		return nil
+	if id := idFromSecret(resp); id != "" {
+		return id, nil
 	}
+	// Vault/OpenBao may return no body for an idempotent update. Read the
+	// named entity back to get its canonical ID for status.
+	resp, err = a.c.Logical().ReadWithContext(ctx, "identity/entity/name/"+name)
+	if err != nil {
+		return "", fmt.Errorf("openbao: read identity entity %q after write: %w", name, err)
+	}
+	if id := idFromSecret(resp); id != "" {
+		return id, nil
+	}
+	return "", fmt.Errorf("openbao: identity entity %q returned no id", name)
+}
+
+// EnsureJWTAuthMount creates a JWT auth mount at `path` if absent. If the
+// mount already exists it is left in place — writes to the config endpoint
+// happen separately via ConfigureJWTTrust. This deliberately avoids listing
+// all auth mounts because the platform controller only needs permission to
+// manage its own deterministic mount paths.
+func (a *APIClient) EnsureJWTAuthMount(ctx context.Context, path string) error {
 	opts := &openbao.EnableAuthOptions{Type: "jwt"}
 	if err := a.c.Sys().EnableAuthWithOptionsWithContext(ctx, path, opts); err != nil {
+		if isPathAlreadyInUse(err) {
+			return nil
+		}
 		return fmt.Errorf("openbao: enable jwt auth at %q: %w", path, err)
 	}
 	return nil
@@ -240,6 +301,16 @@ func (a *APIClient) PolicyExists(ctx context.Context, name string) (PolicyExiste
 
 // isNotFound classifies an error as "target does not exist". Both the
 // openbao client's ResponseError type and plain 404s reach this path.
+func idFromSecret(resp *openbao.Secret) string {
+	if resp == nil || resp.Data == nil {
+		return ""
+	}
+	if id, ok := resp.Data["id"].(string); ok {
+		return id
+	}
+	return ""
+}
+
 func isNotFound(err error) bool {
 	var re *openbao.ResponseError
 	if errors.As(err, &re) {
@@ -256,4 +327,16 @@ func isPermissionDenied(err error) bool {
 		return re.StatusCode == http.StatusForbidden
 	}
 	return false
+}
+
+func isPathAlreadyInUse(err error) bool {
+	var re *openbao.ResponseError
+	if errors.As(err, &re) && re.StatusCode == http.StatusBadRequest {
+		for _, e := range re.Errors {
+			if strings.Contains(strings.ToLower(e), "path is already in use") {
+				return true
+			}
+		}
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "path is already in use")
 }

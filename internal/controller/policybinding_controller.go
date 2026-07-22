@@ -57,7 +57,7 @@ func NewPolicyBindingReconciler(platform, onboarding *clusters.Cluster, provider
 		PlatformCluster:   platform,
 		OnboardingCluster: onboarding,
 		ProviderName:      providerName,
-		ClientFactory:     defaultOpenBaoClientFactory,
+		ClientFactory:     newDefaultOpenBaoClientFactory(platform, providerName),
 	}
 }
 
@@ -70,11 +70,9 @@ func NewPolicyBindingReconciler(platform, onboarding *clusters.Cluster, provider
 //  6. EnsureJWTRole with exactly [spec.policyName] as token_policies.
 //  7. Publish roleName, authMountPath, policyExists, conditions.
 //
-// The full identity binding (bound_subject/bound_claims) requires the
-// resolved ServiceAccount identity from ControlPlaneEntity. Since that
-// piece is pending, this reconciler creates the role with policy but
-// without the identity binding and reports Ready=False DependencyNotReady
-// naming the ControlPlaneEntity IdentityResolved condition as the blocker.
+// The identity binding is taken from ControlPlaneEntity.status.identity,
+// which is resolved from a short-lived ServiceAccount token obtained through
+// an OpenMCP AccessRequest to the target ControlPlane.
 func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	log := logging.FromContextOrDiscard(ctx).WithName("policybinding").WithValues("policybinding", req.NamespacedName.String())
 	ctx = logging.NewContext(ctx, log)
@@ -192,6 +190,15 @@ func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.R
 		pb.Status.PolicyExists = openbaov1alpha1.PolicyExistenceTrue
 	}
 
+	// Do not create a role until we have a resolved identity; an unbound JWT
+	// role would be broader than intended.
+	if !isConditionTrue(ce.Status.Conditions, openbaov1alpha1.ConditionIdentityResolved) || ce.Status.Identity == nil || ce.Status.Identity.Subject == "" {
+		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
+			openbaov1alpha1.ReasonDependencyNotReady,
+			fmt.Sprintf("ControlPlaneEntity %q has not resolved its identity yet", ce.Name))
+		return r.patchStatus(ctx, pb, cfg)
+	}
+
 	// Deterministic role name — stable + surfaceable.
 	roleName := openbao.RoleName(pb.Namespace, pb.Name)
 	pb.Status.RoleName = roleName
@@ -207,22 +214,12 @@ func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.R
 	if trust.Status.Audience != "" {
 		role.BoundAudiences = []string{trust.Status.Audience}
 	}
-	// bound_subject / bound_claims populated from ControlPlaneEntity
-	// identity once ControlPlaneEntity IdentityResolved goes True — that
-	// depends on AccessRequest wiring which is pending.
+	if ce.Status.Identity != nil && ce.Status.Identity.Subject != "" {
+		role.BoundSubject = ce.Status.Identity.Subject
+	}
 	if err := client.EnsureJWTRole(ctx, trust.Status.AuthMountPath, role); err != nil {
 		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
 			openbaov1alpha1.ReasonReconcileError, err.Error())
-		return r.patchStatus(ctx, pb, cfg)
-	}
-
-	// Ready state depends on upstream ControlPlaneEntity actually having
-	// resolved its identity. Until then, the role exists but is not
-	// fully bound — report DependencyNotReady naming the blocker.
-	if !isConditionTrue(ce.Status.Conditions, openbaov1alpha1.ConditionIdentityResolved) {
-		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
-			openbaov1alpha1.ReasonDependencyNotReady,
-			fmt.Sprintf("ControlPlaneEntity %q has not resolved its identity yet", ce.Name))
 		return r.patchStatus(ctx, pb, cfg)
 	}
 

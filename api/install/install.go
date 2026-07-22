@@ -29,6 +29,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
+	corev2alpha1 "github.com/openmcp-project/openmcp-operator/api/core/v2alpha1"
 
 	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
 )
@@ -63,6 +64,7 @@ func InstallOperatorAPIsPlatform(scheme *runtime.Scheme) *runtime.Scheme {
 // choice of cluster client per resource type.
 func InstallOperatorAPIsOnboarding(scheme *runtime.Scheme) *runtime.Scheme {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(corev2alpha1.AddToScheme(scheme))
 	utilruntime.Must(openbaov1alpha1.AddToScheme(scheme))
 	return scheme
 }

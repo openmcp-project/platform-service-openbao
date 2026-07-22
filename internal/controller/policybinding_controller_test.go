@@ -43,7 +43,7 @@ import (
 
 var _ = Describe("PolicyBinding controller", func() {
 	var (
-		fake     *openbao.FakeClient
+		fake       *openbao.FakeClient
 		reconciler *PolicyBindingReconciler
 	)
 

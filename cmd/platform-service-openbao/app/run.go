@@ -42,8 +42,8 @@ import (
 	openmcpconst "github.com/openmcp-project/openmcp-operator/api/constants"
 	"github.com/openmcp-project/openmcp-operator/lib/clusteraccess"
 
-	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
 	providerscheme "github.com/openmcp-project/platform-service-openbao/api/install"
+	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
 	"github.com/openmcp-project/platform-service-openbao/internal/controller"
 )
 
@@ -235,6 +235,11 @@ func (o *RunOptions) Run(ctx context.Context) error {
 						"policybindings", "policybindings/status", "policybindings/finalizers",
 					},
 					Verbs: []string{"*"},
+				},
+				{
+					APIGroups: []string{"core.open-control-plane.io"},
+					Resources: []string{"controlplanes"},
+					Verbs:     []string{"get", "list", "watch"},
 				},
 				{
 					APIGroups: []string{""},

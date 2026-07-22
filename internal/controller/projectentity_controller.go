@@ -30,6 +30,7 @@ import (
 	"github.com/openmcp-project/controller-utils/pkg/logging"
 
 	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
+	"github.com/openmcp-project/platform-service-openbao/internal/openbao"
 )
 
 // +kubebuilder:rbac:groups=openbao.open-control-plane.io,resources=projectentities,verbs=get;list;watch;create;update;patch;delete
@@ -43,6 +44,7 @@ type ProjectEntityReconciler struct {
 	PlatformCluster   *clusters.Cluster
 	OnboardingCluster *clusters.Cluster
 	ProviderName      string
+	ClientFactory     OpenBaoClientFactory
 }
 
 // NewProjectEntityReconciler builds a ProjectEntity reconciler wired to
@@ -52,6 +54,7 @@ func NewProjectEntityReconciler(platform, onboarding *clusters.Cluster, provider
 		PlatformCluster:   platform,
 		OnboardingCluster: onboarding,
 		ProviderName:      providerName,
+		ClientFactory:     newDefaultOpenBaoClientFactory(platform, providerName),
 	}
 }
 
@@ -102,9 +105,23 @@ func (r *ProjectEntityReconciler) Reconcile(ctx context.Context, req reconcile.R
 		return r.patchStatus(ctx, pe, cfg)
 	}
 
-	// EntityID/GroupID would be populated here once ProjectEntity actually
-	// materialises OpenBao identity objects. For now, publishing
-	// readiness lets downstream reconcilers proceed.
+	client, err := r.ClientFactory(ctx, inst)
+	if err != nil {
+		dependencyNotReady(&pe.Status.Conditions, pe.Generation,
+			openbaov1alpha1.ReasonOpenBaoUnreachable, err.Error())
+		return r.patchStatus(ctx, pe, cfg)
+	}
+	entityName := openbao.EntityName(pe.Namespace, pe.Name)
+	entityID, err := client.EnsureEntity(ctx, entityName, map[string]string{
+		"openmcp_namespace": pe.Namespace,
+		"openmcp_name":      pe.Name,
+	})
+	if err != nil {
+		dependencyNotReady(&pe.Status.Conditions, pe.Generation,
+			openbaov1alpha1.ReasonReconcileError, err.Error())
+		return r.patchStatus(ctx, pe, cfg)
+	}
+	pe.Status.EntityID = entityID
 	markReady(&pe.Status.Conditions, pe.Generation)
 	return r.patchStatus(ctx, pe, cfg)
 }

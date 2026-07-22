@@ -24,14 +24,22 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
+	authv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/openmcp-project/controller-utils/pkg/clusters"
+	openmcpconst "github.com/openmcp-project/openmcp-operator/api/constants"
 
 	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
 	"github.com/openmcp-project/platform-service-openbao/internal/openbao"
@@ -40,7 +48,13 @@ import (
 // defaultRequeue is the requeue used when a ServiceConfig doesn't
 // override .spec.requeueAfter. Deliberately modest so a stuck resource
 // re-checks its dependencies without hammering OpenBao.
-const defaultRequeue = 5 * time.Minute
+const (
+	defaultRequeue = 5 * time.Minute
+
+	platformJWTAuthMount = "openmcp-platform-jwt"
+	platformJWTRole      = "platform-service-openbao"
+	platformJWTAudience  = "openbao"
+)
 
 // OpenBaoClientFactory turns an OpenBaoInstance into an openbao.Client.
 // Reconcilers depend on this factory rather than the concrete APIClient so
@@ -167,4 +181,87 @@ func requeueResult(cfg *openbaov1alpha1.ServiceConfig) ctrl.Result {
 		return ctrl.Result{RequeueAfter: defaultRequeue}
 	}
 	return ctrl.Result{RequeueAfter: resolveRequeue(cfg.Spec)}
+}
+
+// newDefaultOpenBaoClientFactory builds OpenBao clients with an in-memory
+// controller credential. Preferred auth path: request a short-lived platform
+// ServiceAccount JWT and exchange it at the pre-bootstrapped
+// openmcp-platform-jwt auth mount. A static platformCredentialRef remains as
+// a temporary escape hatch for manual tests, but no OpenBao token is ever
+// persisted by the controller.
+func newDefaultOpenBaoClientFactory(platformCluster *clusters.Cluster, providerName string) OpenBaoClientFactory {
+	return func(ctx context.Context, inst *openbaov1alpha1.OpenBaoInstance) (openbao.Client, error) {
+		if inst == nil {
+			return nil, fmt.Errorf("openbaoinstance is nil")
+		}
+		cfg := openbao.Config{
+			Address:            inst.Spec.Address,
+			InsecureSkipVerify: inst.Spec.InsecureSkipVerify,
+			Namespace:          inst.Spec.Namespace,
+		}
+		svcCfg, err := getServiceConfig(ctx, platformCluster.Client(), providerName)
+		if err != nil {
+			return nil, err
+		}
+		if svcCfg.Spec.PlatformCredentialRef != nil {
+			cfg.Token, err = readStaticPlatformCredential(ctx, platformCluster.Client(), svcCfg.Spec.PlatformCredentialRef)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			jwt, err := requestPlatformServiceAccountJWT(ctx, platformCluster, providerName)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Token, err = openbao.LoginJWT(ctx, cfg, platformJWTAuthMount, platformJWTRole, jwt)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return openbao.New(cfg)
+	}
+}
+
+func readStaticPlatformCredential(ctx context.Context, c client.Client, ref *openbaov1alpha1.LocalSecretKeyRef) (string, error) {
+	ns := os.Getenv(openmcpconst.EnvVariablePodNamespace)
+	if ns == "" {
+		return "", fmt.Errorf("environment variable %s must be set to read platformCredentialRef", openmcpconst.EnvVariablePodNamespace)
+	}
+	secret := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, secret); err != nil {
+		return "", fmt.Errorf("fetching platform credential Secret %s/%s: %w", ns, ref.Name, err)
+	}
+	value := strings.TrimSpace(string(secret.Data[ref.Key]))
+	if value == "" {
+		return "", fmt.Errorf("platform credential Secret %s/%s key %q is empty or missing", ns, ref.Name, ref.Key)
+	}
+	return value, nil
+}
+
+func requestPlatformServiceAccountJWT(ctx context.Context, platformCluster *clusters.Cluster, providerName string) (string, error) {
+	ns := os.Getenv(openmcpconst.EnvVariablePodNamespace)
+	if ns == "" {
+		return "", fmt.Errorf("environment variable %s must be set to request platform ServiceAccount token", openmcpconst.EnvVariablePodNamespace)
+	}
+	saName := os.Getenv(openmcpconst.EnvVariablePodServiceAccountName)
+	if saName == "" {
+		// OpenMCP operator names provider service accounts with the ps-/sp-/cp-
+		// prefix by provider kind. platform-service-openbao runs as ps-openbao.
+		saName = "ps-" + providerName
+	}
+	clientset, err := kubernetes.NewForConfig(platformCluster.RESTConfig())
+	if err != nil {
+		return "", fmt.Errorf("building platform Kubernetes client: %w", err)
+	}
+	exp := int64(600)
+	tok, err := clientset.CoreV1().ServiceAccounts(ns).CreateToken(ctx, saName, &authv1.TokenRequest{
+		Spec: authv1.TokenRequestSpec{
+			Audiences:         []string{platformJWTAudience},
+			ExpirationSeconds: &exp,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("requesting token for platform ServiceAccount %s/%s: %w", ns, saName, err)
+	}
+	return tok.Status.Token, nil
 }

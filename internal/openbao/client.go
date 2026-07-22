@@ -103,6 +103,10 @@ type Client interface {
 	// Health probes /sys/health.
 	Health(ctx context.Context) (HealthInfo, error)
 
+	// EnsureEntity creates or updates an identity entity and returns its
+	// canonical ID. Idempotent by entity name.
+	EnsureEntity(ctx context.Context, name string, metadata map[string]string) (string, error)
+
 	// EnsureJWTAuthMount creates the mount at `path` (without leading
 	// "auth/") if missing. Idempotent.
 	EnsureJWTAuthMount(ctx context.Context, path string) error

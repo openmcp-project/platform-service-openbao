@@ -57,7 +57,7 @@ func NewControlPlaneTrustReconciler(platform, onboarding *clusters.Cluster, prov
 		PlatformCluster:   platform,
 		OnboardingCluster: onboarding,
 		ProviderName:      providerName,
-		ClientFactory:     defaultOpenBaoClientFactory,
+		ClientFactory:     newDefaultOpenBaoClientFactory(platform, providerName),
 	}
 }
 
@@ -67,12 +67,8 @@ func NewControlPlaneTrustReconciler(platform, onboarding *clusters.Cluster, prov
 //  3. Compute deterministic auth-mount path.
 //  4. On delete: unmount + remove finalizer.
 //  5. Ensure JWT auth mount exists.
-//  6. Discover issuer/JWKS via ControlPlane access — NOT YET IMPLEMENTED;
-//     report TrustConfigured=False with reason IssuerDiscoveryFailed and
-//     a message explaining the missing piece so operators see the
-//     specific blocker rather than a generic timeout.
-//  7. Once issuer discovery works: ConfigureJWTTrust + set status +
-//     mark Ready.
+//  6. Discover issuer/JWKS from the referenced ControlPlane status.
+//  7. ConfigureJWTTrust + set status + mark Ready.
 func (r *ControlPlaneTrustReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	log := logging.FromContextOrDiscard(ctx).WithName("controlplanetrust").WithValues("controlplanetrust", req.NamespacedName.String())
 	ctx = logging.NewContext(ctx, log)
@@ -137,6 +133,39 @@ func (r *ControlPlaneTrustReconciler) Reconcile(ctx context.Context, req reconci
 		return r.patchStatus(ctx, trust, cfg)
 	}
 
+	// Resolve the ControlPlane itself. The onboarding AccessRequest granted at
+	// service startup includes read access to ControlPlane resources, while
+	// target-cluster credentials are requested separately only where needed.
+	cp, err := getControlPlane(ctx, r.OnboardingCluster.Client(), types.NamespacedName{Namespace: trust.Namespace, Name: trust.Spec.ControlPlaneRef.Name})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if cp == nil {
+		dependencyNotReady(&trust.Status.Conditions, trust.Generation,
+			openbaov1alpha1.ReasonDependencyNotFound,
+			fmt.Sprintf("ControlPlane %q not found in namespace %q", trust.Spec.ControlPlaneRef.Name, trust.Namespace))
+		return r.patchStatus(ctx, trust, cfg)
+	}
+	issuer := controlPlaneIssuer(cp)
+	if issuer == "" {
+		setCondition(&trust.Status.Conditions, trust.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionTrustConfigured,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonIssuerDiscoveryFailed,
+			Message: fmt.Sprintf("ControlPlane %s/%s does not expose service-account-issuer endpoint yet", cp.Namespace, cp.Name),
+		})
+		setCondition(&trust.Status.Conditions, trust.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonIssuerDiscoveryFailed,
+			Message: "ControlPlane trust incomplete: issuer discovery pending",
+		})
+		return r.patchStatus(ctx, trust, cfg)
+	}
+	resolvedAudience := resolveControlPlaneAudience(trust.Spec.Audience)
+	trust.Status.Issuer = issuer
+	trust.Status.Audience = resolvedAudience
+
 	// Deterministic mount path — stable across restarts and safe to
 	// surface in status for ESO configuration.
 	mountPath := openbao.AuthMountPath(
@@ -173,22 +202,24 @@ func (r *ControlPlaneTrustReconciler) Reconcile(ctx context.Context, req reconci
 		return r.patchStatus(ctx, trust, cfg)
 	}
 
-	// Issuer / JWKS discovery is done through the target ControlPlane's
-	// API server. Wiring that requires an AccessRequest for the target
-	// ControlPlane; this reconciler currently reports the missing piece
-	// through status so operators see the specific blocker.
+	if err := client.ConfigureJWTTrust(ctx, mountPath, openbao.JWTAuthConfig{
+		JWKSURL:     issuer + "/jwks",
+		BoundIssuer: issuer,
+	}); err != nil {
+		setCondition(&trust.Status.Conditions, trust.Generation, metav1.Condition{
+			Type:    openbaov1alpha1.ConditionTrustConfigured,
+			Status:  metav1.ConditionFalse,
+			Reason:  openbaov1alpha1.ReasonReconcileError,
+			Message: err.Error(),
+		})
+		return r.patchStatus(ctx, trust, cfg)
+	}
 	setCondition(&trust.Status.Conditions, trust.Generation, metav1.Condition{
-		Type:    openbaov1alpha1.ConditionTrustConfigured,
-		Status:  metav1.ConditionFalse,
-		Reason:  openbaov1alpha1.ReasonIssuerDiscoveryFailed,
-		Message: "ControlPlane issuer/JWKS discovery is not yet implemented in this reconciler; auth mount is present but not configured",
+		Type:   openbaov1alpha1.ConditionTrustConfigured,
+		Status: metav1.ConditionTrue,
+		Reason: openbaov1alpha1.ReasonReconciled,
 	})
-	setCondition(&trust.Status.Conditions, trust.Generation, metav1.Condition{
-		Type:    openbaov1alpha1.ConditionReady,
-		Status:  metav1.ConditionFalse,
-		Reason:  openbaov1alpha1.ReasonIssuerDiscoveryFailed,
-		Message: "ControlPlane trust incomplete: issuer discovery pending",
-	})
+	markReady(&trust.Status.Conditions, trust.Generation)
 	return r.patchStatus(ctx, trust, cfg)
 }
 

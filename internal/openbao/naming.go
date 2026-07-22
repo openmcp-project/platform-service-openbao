@@ -45,6 +45,8 @@ const (
 	authMountMax = 60
 	// roleNameMax is the same idea for role names.
 	roleNameMax = 60
+	// entityNameMax is the same idea for identity entity names.
+	entityNameMax = 60
 	// hashSuffixLen is the number of hex digits appended for collision
 	// resistance. 10 hex digits = 40 bits, ample for local uniqueness.
 	hashSuffixLen = 10
@@ -106,4 +108,12 @@ func AuthMountPath(prefix, namespace, controlPlane string) string {
 func RoleName(namespace, policyBindingName string) string {
 	full := sanitize(namespace + "-" + policyBindingName)
 	return truncateWithHash(full, roleNameMax)
+}
+
+// EntityName returns the deterministic OpenBao identity entity name owned by a
+// ProjectEntity. It intentionally includes namespace + resource name so it is
+// stable and unique across projects.
+func EntityName(namespace, projectEntityName string) string {
+	full := sanitize("openbao-" + namespace + "-" + projectEntityName)
+	return truncateWithHash(full, entityNameMax)
 }

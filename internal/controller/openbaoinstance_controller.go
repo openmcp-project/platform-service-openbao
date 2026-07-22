@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,7 +32,6 @@ import (
 	"github.com/openmcp-project/controller-utils/pkg/logging"
 
 	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
-	"github.com/openmcp-project/platform-service-openbao/internal/openbao"
 )
 
 // +kubebuilder:rbac:groups=openbao.open-control-plane.io,resources=openbaoinstances,verbs=get;list;watch;create;update;patch;delete
@@ -59,7 +57,7 @@ func NewOpenBaoInstanceReconciler(platformCluster *clusters.Cluster, providerNam
 	return &OpenBaoInstanceReconciler{
 		PlatformCluster: platformCluster,
 		ProviderName:    providerName,
-		ClientFactory:   defaultOpenBaoClientFactory,
+		ClientFactory:   newDefaultOpenBaoClientFactory(platformCluster, providerName),
 	}
 }
 
@@ -174,27 +172,6 @@ func (r *OpenBaoInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			predicate.TypedGenerationChangedPredicate[*openbaov1alpha1.OpenBaoInstance]{},
 		)).
 		Complete(r)
-}
-
-// defaultOpenBaoClientFactory builds a real APIClient from an
-// OpenBaoInstance spec. It resolves the CA bundle when
-// spec.caBundleRef is set, but reading the platform credential from
-// ServiceConfig.spec.platformCredentialRef is deferred until a
-// per-reconciler credential store is available — see the TODO on the
-// design's task 3.1.
-var defaultOpenBaoClientFactory OpenBaoClientFactory = func(_ context.Context, inst *openbaov1alpha1.OpenBaoInstance) (openbao.Client, error) {
-	if inst == nil {
-		return nil, errors.New("openbaoinstance is nil")
-	}
-	// CA bundle resolution is intentionally omitted here for the first
-	// pass; production wiring will inject the platform credential + CA
-	// bytes via a factory closed over the manager's Secret cache.
-	cfg := openbao.Config{
-		Address:            inst.Spec.Address,
-		InsecureSkipVerify: inst.Spec.InsecureSkipVerify,
-		Namespace:          inst.Spec.Namespace,
-	}
-	return openbao.New(cfg)
 }
 
 // sourceFromPlatform-helper removed; use source.Kind directly.

@@ -40,10 +40,11 @@ type FakeClient struct {
 	// so reconcilers exercise the "cannot check" branch.
 	PoliciesUnknown bool
 
-	mu      sync.Mutex
-	mounts  map[string]bool          // path -> exists
-	configs map[string]JWTAuthConfig // path -> last config written
-	roles   map[string]JWTRole       // mount+"/"+name -> last role written
+	mu       sync.Mutex
+	mounts   map[string]bool          // path -> exists
+	configs  map[string]JWTAuthConfig // path -> last config written
+	roles    map[string]JWTRole       // mount+"/"+name -> last role written
+	entities map[string]string        // name -> id
 }
 
 // NewFakeClient returns a healthy fake with empty state.
@@ -53,6 +54,7 @@ func NewFakeClient() *FakeClient {
 		mounts:   map[string]bool{},
 		configs:  map[string]JWTAuthConfig{},
 		roles:    map[string]JWTRole{},
+		entities: map[string]string{},
 	}
 }
 
@@ -64,6 +66,15 @@ func (f *FakeClient) Health(_ context.Context) (HealthInfo, error) {
 		return HealthInfo{}, f.HealthErr
 	}
 	return f.HealthResult, nil
+}
+
+func (f *FakeClient) EnsureEntity(_ context.Context, name string, _ map[string]string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.entities[name] == "" {
+		f.entities[name] = "entity-" + name
+	}
+	return f.entities[name], nil
 }
 
 func (f *FakeClient) EnsureJWTAuthMount(_ context.Context, path string) error {

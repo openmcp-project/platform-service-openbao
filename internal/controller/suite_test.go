@@ -49,13 +49,13 @@ var (
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	platformEnv        *envtest.Environment
-	onboardingEnv      *envtest.Environment
-	platformCfg        *rest.Config
-	onboardingCfg      *rest.Config
-	platformCluster    *clusters.Cluster
-	onboardingCluster  *clusters.Cluster
-	platformK8sClient  client.Client
+	platformEnv         *envtest.Environment
+	onboardingEnv       *envtest.Environment
+	platformCfg         *rest.Config
+	onboardingCfg       *rest.Config
+	platformCluster     *clusters.Cluster
+	onboardingCluster   *clusters.Cluster
+	platformK8sClient   client.Client
 	onboardingK8sClient client.Client
 
 	testScheme = runtime.NewScheme()
