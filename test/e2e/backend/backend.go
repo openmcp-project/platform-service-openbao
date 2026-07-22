@@ -98,6 +98,10 @@ func Start(ctx context.Context, networkName string) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
+	readyLog := "OpenBao server started!"
+	if strings.Contains(strings.ToLower(image), "vault") {
+		readyLog = "Vault server started!"
+	}
 	env := map[string]string{}
 	// Vault honours these env vars; OpenBao ignores unknown ones so
 	// setting both keeps a single code path.
@@ -121,7 +125,7 @@ func Start(ctx context.Context, networkName string) (*Backend, error) {
 			// images. Not strictly required in dev mode but keeps logs
 			// clean.
 			CapAdd:     []string{"IPC_LOCK"},
-			WaitingFor: wait.ForLog("OpenBao server started!").WithStartupTimeout(60 * time.Second),
+			WaitingFor: wait.ForLog(readyLog).WithStartupTimeout(60 * time.Second),
 		},
 		Started: true,
 	}

@@ -78,6 +78,7 @@ func TestPolicyBinding_TrustIntegration(t *testing.T) {
 
 	feat := features.New("policybinding trust integration").
 		Setup(providers.CreateMCP("prod", wait.WithTimeout(10*time.Minute))).
+		Setup(patchControlPlaneIssuer("prod")).
 		Setup(createMCPServiceAccount("prod")).
 		Setup(seedPolicy(b, "kv-prod-read", `path "kv/data/prod/*" { capabilities = ["read"] }`)).
 		Setup(applyFixtures("fixtures/policybinding-chain")).
@@ -98,6 +99,35 @@ func seedPolicy(b *backend.Backend, name, hcl string) func(context.Context, *tes
 	return func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 		if err := b.SeedPolicy(ctx, name, hcl); err != nil {
 			t.Fatalf("seed policy %q: %v", name, err)
+		}
+		return ctx
+	}
+}
+
+func patchControlPlaneIssuer(mcpName string) func(context.Context, *testing.T, *envconf.Config) context.Context {
+	return func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
+		onboarding, err := clusterutils.OnboardingConfig()
+		if err != nil {
+			t.Fatalf("resolve onboarding cluster: %v", err)
+		}
+		cp := &unstructured.Unstructured{}
+		cp.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "core.open-control-plane.io",
+			Version: "v2alpha1",
+			Kind:    "ControlPlane",
+		})
+		if err := onboarding.Client().Resources().Get(ctx, mcpName, "default", cp); err != nil {
+			t.Fatalf("get ControlPlane %s: %v", mcpName, err)
+		}
+		issuer := fmt.Sprintf("https://issuer.e2e.invalid/%s", mcpName)
+		if err := unstructured.SetNestedSlice(cp.Object, []any{map[string]any{
+			"name": "service-account-issuer",
+			"url":  issuer,
+		}}, "status", "endpoints"); err != nil {
+			t.Fatalf("set ControlPlane issuer endpoint: %v", err)
+		}
+		if err := onboarding.Client().Resources().UpdateStatus(ctx, cp); err != nil {
+			t.Fatalf("patch ControlPlane issuer endpoint: %v", err)
 		}
 		return ctx
 	}
