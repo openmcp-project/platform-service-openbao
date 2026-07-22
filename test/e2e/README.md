@@ -123,9 +123,13 @@ ready" path; both intentionally report `Ready=False`.
 
 ## CI status
 
-The GitHub Actions workflow (`.github/workflows/test-e2e.yml`) is
-currently `workflow_dispatch` only. Re-enable `push` / `pull_request`
-triggers once the suite has passed at least once on `ubuntu-latest`.
+The GitHub Actions workflow (`.github/workflows/test-e2e.yml`) is manual-only
+(`workflow_dispatch`) and runs a matrix with both supported test backends:
+
+- `openbao/openbao:latest`
+- `hashicorp/vault:latest`
+
+Each backend runs in its own job, so OpenBao and Vault execute in parallel.
 GHA runners have Docker natively, so no extra setup is required.
 
 ## Known environment limitations
