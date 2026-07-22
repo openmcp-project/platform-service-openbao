@@ -315,14 +315,20 @@ func (o *RunOptions) Run(ctx context.Context) error {
 		return fmt.Errorf("setting up PolicyBinding controller: %w", err)
 	}
 
-	if err := openbaowebhook.SetupProjectEntityWebhookWithManager(mgr); err != nil {
-		return fmt.Errorf("setting up ProjectEntity webhook: %w", err)
-	}
-	if err := openbaowebhook.SetupControlPlaneTrustWebhookWithManager(mgr); err != nil {
-		return fmt.Errorf("setting up ControlPlaneTrust webhook: %w", err)
-	}
-	if err := openbaowebhook.SetupControlPlaneEntityWebhookWithManager(mgr); err != nil {
-		return fmt.Errorf("setting up ControlPlaneEntity webhook: %w", err)
+	// Register webhook handlers only when webhook certificates are configured.
+	// OpenMCP PlatformService init must create the webhook TLS secret before the
+	// operator mounts it; without certs, registering handlers makes the manager
+	// fail while starting the webhook server.
+	if o.WebhookCertPath != "" {
+		if err := openbaowebhook.SetupProjectEntityWebhookWithManager(mgr); err != nil {
+			return fmt.Errorf("setting up ProjectEntity webhook: %w", err)
+		}
+		if err := openbaowebhook.SetupControlPlaneTrustWebhookWithManager(mgr); err != nil {
+			return fmt.Errorf("setting up ControlPlaneTrust webhook: %w", err)
+		}
+		if err := openbaowebhook.SetupControlPlaneEntityWebhookWithManager(mgr); err != nil {
+			return fmt.Errorf("setting up ControlPlaneEntity webhook: %w", err)
+		}
 	}
 
 	if o.MetricsCertWatcher != nil {
