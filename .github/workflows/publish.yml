@@ -38,10 +38,11 @@ jobs:
           SHORT_SHA="$(git rev-parse --short HEAD)"
           # SemVer build metadata (spec rule 10): the commit hash lives after '+'.
           VERSION="v0.0.0-alpha.${COUNT}+${SHORT_SHA}"
-          # OCI/Docker tags forbid '+', so the image tag uses the clean
-          # pre-release only; the full '+<sha>' version and the complete
-          # commit SHA are recorded in OCI labels instead.
-          IMAGE_TAG="v0.0.0-alpha.${COUNT}"
+          # OCI/Docker tags forbid '+', so the image tag carries the same
+          # version with '+' sanitized to '-' (still valid SemVer, with the
+          # hash as a pre-release identifier). The true '+' form and the full
+          # commit SHA are also recorded in OCI labels.
+          IMAGE_TAG="${VERSION/+/-}"
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
