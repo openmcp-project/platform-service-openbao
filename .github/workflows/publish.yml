@@ -36,10 +36,10 @@ jobs:
         run: |
           COUNT="$(git rev-list --count HEAD)"
           SHORT_SHA="$(git rev-parse --short HEAD)"
-          # SemVer with build metadata: the commit hash lives after '+'.
-          VERSION="v0.0.0-alpha.${COUNT}+g${SHORT_SHA}"
+          # SemVer build metadata (spec rule 10): the commit hash lives after '+'.
+          VERSION="v0.0.0-alpha.${COUNT}+${SHORT_SHA}"
           # OCI/Docker tags forbid '+', so the image tag uses the clean
-          # pre-release only; the full '+g<sha>' version and the complete
+          # pre-release only; the full '+<sha>' version and the complete
           # commit SHA are recorded in OCI labels instead.
           IMAGE_TAG="v0.0.0-alpha.${COUNT}"
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
@@ -66,7 +66,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.image_tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          # Provenance recorded as OCI labels: full '+g<sha>' version and the
+          # Provenance recorded as OCI labels: full '+<sha>' version and the
           # complete commit SHA (revision), which tags cannot carry.
           labels: |
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
