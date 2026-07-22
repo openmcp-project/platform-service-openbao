@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -323,5 +324,71 @@ func (r *PolicyBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("policybinding").
 		For(&openbaov1alpha1.PolicyBinding{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&openbaov1alpha1.ControlPlaneEntity{}, handler.EnqueueRequestsFromMapFunc(r.enqueueForEntity)).
+		Watches(&openbaov1alpha1.ControlPlaneTrust{}, handler.EnqueueRequestsFromMapFunc(r.enqueueForTrust)).
 		Complete(r)
+}
+
+func (r *PolicyBindingReconciler) enqueueForEntity(ctx context.Context, obj client.Object) []reconcile.Request {
+	entity, ok := obj.(*openbaov1alpha1.ControlPlaneEntity)
+	if !ok {
+		return nil
+	}
+	list := &openbaov1alpha1.PolicyBindingList{}
+	if err := r.OnboardingCluster.Client().List(ctx, list, client.InNamespace(entity.Namespace)); err != nil {
+		logging.FromContextOrDiscard(ctx).Error(err, "Could not list PolicyBindings for ControlPlaneEntity")
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		if policyBindingReferencesEntity(&list.Items[i], entity.Name) {
+			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+		}
+	}
+	return reqs
+}
+
+func (r *PolicyBindingReconciler) enqueueForTrust(ctx context.Context, obj client.Object) []reconcile.Request {
+	trust, ok := obj.(*openbaov1alpha1.ControlPlaneTrust)
+	if !ok {
+		return nil
+	}
+	entities := &openbaov1alpha1.ControlPlaneEntityList{}
+	if err := r.OnboardingCluster.Client().List(ctx, entities, client.InNamespace(trust.Namespace)); err != nil {
+		logging.FromContextOrDiscard(ctx).Error(err, "Could not list ControlPlaneEntities for ControlPlaneTrust")
+		return nil
+	}
+	entityNames := map[string]struct{}{}
+	for i := range entities.Items {
+		if entities.Items[i].Spec.ControlPlaneTrustRef.Name == trust.Name {
+			entityNames[entities.Items[i].Name] = struct{}{}
+		}
+	}
+	if len(entityNames) == 0 {
+		return nil
+	}
+	bindings := &openbaov1alpha1.PolicyBindingList{}
+	if err := r.OnboardingCluster.Client().List(ctx, bindings, client.InNamespace(trust.Namespace)); err != nil {
+		logging.FromContextOrDiscard(ctx).Error(err, "Could not list PolicyBindings for ControlPlaneTrust")
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(bindings.Items))
+	for i := range bindings.Items {
+		for _, ref := range bindings.Items[i].Spec.ControlPlaneEntityRefs {
+			if _, ok := entityNames[ref.Name]; ok {
+				reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&bindings.Items[i])})
+				break
+			}
+		}
+	}
+	return reqs
+}
+
+func policyBindingReferencesEntity(binding *openbaov1alpha1.PolicyBinding, entityName string) bool {
+	for _, ref := range binding.Spec.ControlPlaneEntityRefs {
+		if ref.Name == entityName {
+			return true
+		}
+	}
+	return false
 }

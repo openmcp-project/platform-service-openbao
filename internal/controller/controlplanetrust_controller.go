@@ -25,7 +25,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -261,5 +263,26 @@ func (r *ControlPlaneTrustReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("controlplanetrust").
 		For(&openbaov1alpha1.ControlPlaneTrust{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&openbaov1alpha1.ProjectEntity{}, handler.EnqueueRequestsFromMapFunc(r.enqueueForProjectEntity)).
 		Complete(r)
+}
+
+func (r *ControlPlaneTrustReconciler) enqueueForProjectEntity(ctx context.Context, obj client.Object) []reconcile.Request {
+	pe, ok := obj.(*openbaov1alpha1.ProjectEntity)
+	if !ok {
+		return nil
+	}
+	list := &openbaov1alpha1.ControlPlaneTrustList{}
+	if err := r.OnboardingCluster.Client().List(ctx, list); err != nil {
+		logging.FromContextOrDiscard(ctx).Error(err, "Could not list ControlPlaneTrusts for ProjectEntity")
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		ref := list.Items[i].Spec.ProjectEntityRef
+		if ref.Namespace == pe.Namespace && ref.Name == pe.Name {
+			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+		}
+	}
+	return reqs
 }
