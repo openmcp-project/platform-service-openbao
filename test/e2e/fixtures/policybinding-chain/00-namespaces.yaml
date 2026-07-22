@@ -1,4 +1,4 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: project-team-a
+# No onboarding namespaces are needed for this fixture. The e2e creates
+# resources in the onboarding cluster's default namespace, because
+# openmcp-testing's providers.CreateMCP helper also creates the ControlPlane
+# there.

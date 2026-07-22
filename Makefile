@@ -88,7 +88,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run the e2e tests (Kind + real OpenBao container).
-	go test -tags=e2e ./test/e2e/... -count=1 -timeout=30m -v
+	go test -p 1 -tags=e2e ./test/e2e/... -count=1 -timeout=30m -v
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

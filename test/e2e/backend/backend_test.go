@@ -21,10 +21,9 @@ package backend_test
 
 import (
 	"context"
+	"os/exec"
 	"testing"
 	"time"
-
-	"github.com/testcontainers/testcontainers-go/network"
 
 	"github.com/openmcp-project/platform-service-openbao/test/e2e/backend"
 )
@@ -33,17 +32,23 @@ import (
 // harness. If this fails, the full e2e suite has no chance — running it
 // first surfaces container/Docker/image problems without the extra 5+
 // minutes of Kind bootstrap.
+func ensureNetwork(ctx context.Context, name string) error {
+	if err := exec.CommandContext(ctx, "docker", "network", "inspect", name).Run(); err == nil {
+		return nil
+	}
+	return exec.CommandContext(ctx, "docker", "network", "create", name).Run()
+}
+
 func TestBackend_Roundtrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	nw, err := network.New(ctx)
-	if err != nil {
-		t.Fatalf("create docker network: %v", err)
+	const networkName = "kind"
+	if err := ensureNetwork(ctx, networkName); err != nil {
+		t.Fatalf("ensure docker network: %v", err)
 	}
-	t.Cleanup(func() { _ = nw.Remove(context.Background()) })
 
-	b, err := backend.Start(ctx, nw)
+	b, err := backend.Start(ctx, networkName)
 	if err != nil {
 		t.Fatalf("start backend: %v", err)
 	}

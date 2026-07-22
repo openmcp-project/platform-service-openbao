@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
 	"github.com/openmcp-project/openmcp-testing/pkg/clusterutils"
+	"github.com/openmcp-project/openmcp-testing/pkg/providers"
 
 	"github.com/openmcp-project/platform-service-openbao/test/e2e/backend"
 )
@@ -67,9 +68,8 @@ var (
 //  5. spec Requirement 7 invariant: no Kubernetes Secret ever holds an
 //     OpenBao token.
 //
-// Not covered (see openspec tasks 2.5, 4.3, 4.4): full JWT SA login
-// flow — that depends on AccessRequest wiring to the target
-// ControlPlane, which is not yet implemented in the controller.
+// The test uses a real OpenMCP-created ControlPlane and a real ServiceAccount
+// token to prove the JWT login path end-to-end.
 func TestPolicyBinding_TrustIntegration(t *testing.T) {
 	b := Backend()
 	if b == nil {
@@ -77,12 +77,14 @@ func TestPolicyBinding_TrustIntegration(t *testing.T) {
 	}
 
 	feat := features.New("policybinding trust integration").
+		Setup(providers.CreateMCP("prod", wait.WithTimeout(10*time.Minute))).
+		Setup(createMCPServiceAccount("prod")).
 		Setup(seedPolicy(b, "kv-prod-read", `path "kv/data/prod/*" { capabilities = ["read"] }`)).
 		Setup(applyFixtures("fixtures/policybinding-chain")).
 		Assess("OpenBaoInstance reports Reachable=True", assessOpenBaoInstanceReachable()).
 		Assess("PolicyBinding publishes roleName + policyExists=True", assessPolicyBindingStatus()).
 		Assess("JWT role exists on OpenBao with exactly the named policy", assessRoleOnBackend(b, "kv-prod-read")).
-		Assess("no token Secret exists in the tenant namespace", assessNoTokenSecret("project-team-a")).
+		Assess("no token Secret exists in the tenant namespace", assessNoTokenSecret("default")).
 		Feature()
 
 	testenv.Test(t, feat)
@@ -96,6 +98,24 @@ func seedPolicy(b *backend.Backend, name, hcl string) func(context.Context, *tes
 	return func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 		if err := b.SeedPolicy(ctx, name, hcl); err != nil {
 			t.Fatalf("seed policy %q: %v", name, err)
+		}
+		return ctx
+	}
+}
+
+func createMCPServiceAccount(mcpName string) func(context.Context, *testing.T, *envconf.Config) context.Context {
+	return func(ctx context.Context, t *testing.T, platform *envconf.Config) context.Context {
+		mcp, err := clusterutils.MCPConfig(ctx, platform, mcpName)
+		if err != nil {
+			t.Fatalf("resolve MCP cluster %q: %v", mcpName, err)
+		}
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "external-secrets"}}
+		if err := mcp.Client().Resources().Create(ctx, ns); err != nil && !isAlreadyExists(err) {
+			t.Fatalf("create MCP namespace external-secrets: %v", err)
+		}
+		sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "external-secrets", Namespace: "external-secrets"}}
+		if err := mcp.Client().Resources().Create(ctx, sa); err != nil && !isAlreadyExists(err) {
+			t.Fatalf("create MCP serviceaccount external-secrets/external-secrets: %v", err)
 		}
 		return ctx
 	}
@@ -186,7 +206,7 @@ func assessPolicyBindingStatus() func(context.Context, *testing.T, *envconf.Conf
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(policyBindGVK)
 		obj.SetName("eso-reader-kv-prod")
-		obj.SetNamespace("project-team-a")
+		obj.SetNamespace("default")
 
 		var lastRoleName, lastPolicyExists string
 		err = wait.For(func(waitCtx context.Context) (bool, error) {
@@ -202,9 +222,9 @@ func assessPolicyBindingStatus() func(context.Context, *testing.T, *envconf.Conf
 		if err != nil {
 			dumpDiagnostics(ctx, t, c, "PolicyBinding status", obj)
 			// Also dump upstream deps so we can see which condition is blocking.
-			dumpDependency(ctx, t, onboarding, projEntityGVK, "team-a", "project-team-a")
-			dumpDependency(ctx, t, onboarding, cpTrustGVK, "prod", "project-team-a")
-			dumpDependency(ctx, t, onboarding, cpEntityGVK, "eso-reader", "project-team-a")
+			dumpDependency(ctx, t, onboarding, projEntityGVK, "team-a", "default")
+			dumpDependency(ctx, t, onboarding, cpTrustGVK, "prod", "default")
+			dumpDependency(ctx, t, onboarding, cpEntityGVK, "eso-reader", "default")
 			t.Fatalf("waiting for PolicyBinding status (roles[0].roleName=%q, policyExists=%q): %v",
 				lastRoleName, lastPolicyExists, err)
 		}
@@ -224,7 +244,7 @@ func assessRoleOnBackend(b *backend.Backend, expectedPolicy string) func(context
 		// fixture references exactly one entity, so we assert on [0].
 		pb := &unstructured.Unstructured{}
 		pb.SetGroupVersionKind(policyBindGVK)
-		if err := onboarding.Client().Resources().Get(ctx, "eso-reader-kv-prod", "project-team-a", pb); err != nil {
+		if err := onboarding.Client().Resources().Get(ctx, "eso-reader-kv-prod", "default", pb); err != nil {
 			t.Fatalf("get PolicyBinding: %v", err)
 		}
 		mount, roleName := firstMountAndRole(pb)

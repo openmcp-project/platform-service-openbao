@@ -10,6 +10,8 @@ metadata:
     app.kubernetes.io/managed-by: e2e
 spec:
   address: {{ .OpenBaoAddress }}
-  # Backend runs in dev mode with its self-signed HTTP listener; skip
-  # verification for the test.
+  # Backend runs in dev mode over HTTP.
   insecureSkipVerify: true
+  auth:
+    jwt:
+      mountPrefix: openbao

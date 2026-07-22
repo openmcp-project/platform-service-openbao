@@ -1,24 +1,11 @@
-# NOTE: ControlPlaneTrust's issuer/JWKS discovery requires
-# AccessRequest access to the target ControlPlane, which is not yet
-# implemented in the controller (see openspec tasks 2.5, 4.3). The
-# reconciler will:
-#   - resolve the ProjectEntity + OpenBaoInstance references
-#   - create the OpenBao JWT auth mount on the backend
-#   - and then report TrustConfigured=False / Ready=False with reason
-#     IssuerDiscoveryFailed
-#
-# The e2e test asserts THAT specific state, not full readiness.
 apiVersion: openbao.open-control-plane.io/v1alpha1
 kind: ControlPlaneTrust
 metadata:
   name: prod
-  namespace: project-team-a
+  namespace: default
 spec:
   projectEntityRef:
     name: team-a
-    namespace: project-team-a
-  # controlPlaneRef points at a name-only reference in this same
-  # namespace. Even though no ControlPlane object exists in this
-  # simplified e2e, the mount-path computation only reads the name.
+    namespace: default
   controlPlaneRef:
     name: prod

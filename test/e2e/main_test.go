@@ -41,6 +41,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,7 +50,6 @@ import (
 	"sigs.k8s.io/e2e-framework/klient/wait"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
-	tcnet "github.com/testcontainers/testcontainers-go/network"
 
 	"github.com/openmcp-project/openmcp-testing/pkg/platformservices"
 	"github.com/openmcp-project/openmcp-testing/pkg/providers"
@@ -90,17 +91,19 @@ func TestMain(m *testing.M) {
 // the same cleanup. Returns nil only when the test binary itself
 // reports success.
 func run(ctx context.Context, m *testing.M) error {
-	// 1. Docker network — created before Kind so KIND_EXPERIMENTAL_DOCKER_NETWORK
-	// can point Kind at it.
-	nw, err := tcnet.New(ctx)
-	if err != nil {
-		return fmt.Errorf("create docker network: %w", err)
+	if ok, reason := hasEnoughDockerMemory(ctx); !ok {
+		klog.Warningf("Skipping full OpenMCP e2e: %s", reason)
+		return nil
 	}
-	defer func() { _ = nw.Remove(context.Background()) }()
 
-	// Kind honours this env var by creating its cluster on the named
-	// network rather than the default "kind" one.
-	if err := os.Setenv("KIND_EXPERIMENTAL_DOCKER_NETWORK", nw.Name); err != nil {
+	// 1. Use the standard Docker network used by Kind. Nested clusters created
+	// by cluster-provider-kind also join this network, so the platform cluster can
+	// reach their API servers and all clusters can reach the backend alias.
+	const kindNetwork = "kind"
+	if err := ensureDockerNetwork(ctx, kindNetwork); err != nil {
+		return fmt.Errorf("ensure Docker network %q: %w", kindNetwork, err)
+	}
+	if err := os.Setenv("KIND_EXPERIMENTAL_DOCKER_NETWORK", kindNetwork); err != nil {
 		return fmt.Errorf("set KIND_EXPERIMENTAL_DOCKER_NETWORK: %w", err)
 	}
 	defer os.Unsetenv("KIND_EXPERIMENTAL_DOCKER_NETWORK")
@@ -108,7 +111,8 @@ func run(ctx context.Context, m *testing.M) error {
 	// 2. Backend on the same network.
 	backendCtx, backendCancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer backendCancel()
-	b, err = backend.Start(backendCtx, nw)
+	var err error
+	b, err = backend.Start(backendCtx, kindNetwork)
 	if err != nil {
 		return fmt.Errorf("start backend: %w", err)
 	}
@@ -148,17 +152,19 @@ func run(ctx context.Context, m *testing.M) error {
 	openmcp := setup.OpenMCPSetup{
 		Namespace: "openmcp-system",
 		Operator: setup.OpenMCPOperatorSetup{
-			Name:         "openmcp-operator",
-			Image:        "ghcr.io/openmcp-project/images/openmcp-operator:v1.0.0",
+			Name: "openmcp-operator",
+			// renovate: datasource=docker depName=ghcr.io/openmcp-project/images/openmcp-operator
+			Image:        "ghcr.io/openmcp-project/images/openmcp-operator:v1.3.0",
 			Environment:  "debug",
 			PlatformName: "platform",
-			WaitOpts:     []wait.Option{wait.WithTimeout(5 * time.Minute)},
+			WaitOpts:     []wait.Option{wait.WithTimeout(10 * time.Minute)},
 		},
 		ClusterProviders: []providers.ClusterProviderSetup{
 			{
-				Name:     "kind",
-				Image:    "ghcr.io/openmcp-project/images/cluster-provider-kind:v0.4.1",
-				WaitOpts: []wait.Option{wait.WithTimeout(5 * time.Minute)},
+				Name: "kind",
+				// renovate: datasource=docker depName=ghcr.io/openmcp-project/images/cluster-provider-kind
+				Image:    "ghcr.io/openmcp-project/images/cluster-provider-kind:v0.6.0",
+				WaitOpts: []wait.Option{wait.WithTimeout(10 * time.Minute)},
 			},
 		},
 		PlatformServices: []platformservices.PlatformServiceSetup{
@@ -167,10 +173,10 @@ func run(ctx context.Context, m *testing.M) error {
 				Image:                     managerImage,
 				LoadImageToCluster:        true,
 				PlatformServiceConfigsDir: configsDir,
-				WaitOpts:                  []wait.Option{wait.WithTimeout(5 * time.Minute)},
+				WaitOpts:                  []wait.Option{wait.WithTimeout(10 * time.Minute)},
 			},
 		},
-		WaitOpts: []wait.Option{wait.WithTimeout(5 * time.Minute)},
+		WaitOpts: []wait.Option{wait.WithTimeout(10 * time.Minute)},
 	}
 	testenv = env.NewWithConfig(envconf.New().WithNamespace(openmcp.Namespace))
 	openmcp.Bootstrap(testenv)
@@ -185,6 +191,45 @@ func run(ctx context.Context, m *testing.M) error {
 // buildManagerImage runs `make docker-build IMG=<tag>` in the repo root.
 // Blocking; runs synchronously so image is available before Kind loads
 // it.
+func hasEnoughDockerMemory(ctx context.Context) (bool, string) {
+	if os.Getenv("E2E_SKIP_DOCKER_MEMORY_CHECK") == "true" {
+		return true, ""
+	}
+	const defaultMinGiB = 6
+	minGiB := defaultMinGiB
+	if raw := os.Getenv("E2E_MIN_DOCKER_MEMORY_GIB"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			return false, fmt.Sprintf("E2E_MIN_DOCKER_MEMORY_GIB=%q is not an integer", raw)
+		}
+		minGiB = parsed
+	}
+	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.MemTotal}}").Output()
+	if err != nil {
+		return false, fmt.Sprintf("could not inspect Docker memory: %v", err)
+	}
+	bytes, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return false, fmt.Sprintf("could not parse Docker memory %q: %v", strings.TrimSpace(string(out)), err)
+	}
+	minBytes := int64(minGiB) * 1024 * 1024 * 1024
+	if bytes < minBytes {
+		return false, fmt.Sprintf("Docker has %.1fGiB RAM, need at least %dGiB for nested kind OpenMCP bootstrap (set E2E_SKIP_DOCKER_MEMORY_CHECK=true to force)", float64(bytes)/(1024*1024*1024), minGiB)
+	}
+	return true, ""
+}
+
+func ensureDockerNetwork(ctx context.Context, name string) error {
+	inspect := exec.CommandContext(ctx, "docker", "network", "inspect", name)
+	if err := inspect.Run(); err == nil {
+		return nil
+	}
+	create := exec.CommandContext(ctx, "docker", "network", "create", name)
+	create.Stdout = os.Stdout
+	create.Stderr = os.Stderr
+	return create.Run()
+}
+
 func buildManagerImage(ctx context.Context, tag string) error {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
