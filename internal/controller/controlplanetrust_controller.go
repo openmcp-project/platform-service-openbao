@@ -177,7 +177,7 @@ func (r *ControlPlaneTrustReconciler) Reconcile(ctx context.Context, req reconci
 	)
 	trust.Status.AuthMountPath = mountPath
 
-	client, err := r.ClientFactory(ctx, inst)
+	baoClient, err := r.ClientFactory(ctx, inst)
 	if err != nil {
 		setCondition(&trust.Status.Conditions, trust.Generation, metav1.Condition{
 			Type:    openbaov1alpha1.ConditionTrustConfigured,
@@ -194,7 +194,7 @@ func (r *ControlPlaneTrustReconciler) Reconcile(ctx context.Context, req reconci
 		return r.patchStatus(ctx, trust, cfg)
 	}
 
-	if err := client.EnsureJWTAuthMount(ctx, mountPath); err != nil {
+	if err := baoClient.EnsureJWTAuthMount(ctx, mountPath); err != nil {
 		setCondition(&trust.Status.Conditions, trust.Generation, metav1.Condition{
 			Type:    openbaov1alpha1.ConditionTrustConfigured,
 			Status:  metav1.ConditionFalse,
@@ -204,7 +204,7 @@ func (r *ControlPlaneTrustReconciler) Reconcile(ctx context.Context, req reconci
 		return r.patchStatus(ctx, trust, cfg)
 	}
 
-	if err := client.ConfigureJWTTrust(ctx, mountPath, openbao.JWTAuthConfig{
+	if err := baoClient.ConfigureJWTTrust(ctx, mountPath, openbao.JWTAuthConfig{
 		JWKSURL:     issuer + "/jwks",
 		BoundIssuer: issuer,
 	}); err != nil {
@@ -235,9 +235,9 @@ func (r *ControlPlaneTrustReconciler) reconcileDelete(ctx context.Context, trust
 			return ctrl.Result{}, err
 		}
 		if inst != nil && isInstanceReachable(inst) {
-			client, err := r.ClientFactory(ctx, inst)
+			baoClient, err := r.ClientFactory(ctx, inst)
 			if err == nil {
-				if err := client.DeleteAuthMount(ctx, trust.Status.AuthMountPath); err != nil {
+				if err := baoClient.DeleteAuthMount(ctx, trust.Status.AuthMountPath); err != nil {
 					return ctrl.Result{}, fmt.Errorf("deleting auth mount: %w", err)
 				}
 			}
