@@ -115,14 +115,14 @@ func (r *ControlPlaneTrustReconciler) Reconcile(ctx context.Context, req reconci
 	}
 
 	// The ProjectEntity carries the OpenBaoInstance reference; use it.
-	inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), pe.Spec.OpenBaoRef.Name)
+	inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), pe.Spec.OpenBaoInstanceRef.Name)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if inst == nil {
 		dependencyNotReady(&trust.Status.Conditions, trust.Generation,
 			openbaov1alpha1.ReasonDependencyNotFound,
-			fmt.Sprintf("OpenBaoInstance %q not found", pe.Spec.OpenBaoRef.Name))
+			fmt.Sprintf("OpenBaoInstance %q not found", pe.Spec.OpenBaoInstanceRef.Name))
 		return r.patchStatus(ctx, trust, cfg)
 	}
 	trust.Status.ResolvedOpenBaoInstance = inst.Name

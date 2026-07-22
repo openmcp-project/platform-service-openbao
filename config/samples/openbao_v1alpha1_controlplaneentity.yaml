@@ -7,8 +7,9 @@ metadata:
   name: eso-reader
   namespace: project-team-a--ws-prod
 spec:
-  # Target ControlPlane.
-  controlPlaneRef:
+  # ControlPlaneTrust in the same namespace. The trust identifies the target
+  # ControlPlane, audience, and OpenBao backend context.
+  controlPlaneTrustRef:
     name: prod
   # Existing ServiceAccount inside the ControlPlane. NOT created or
   # managed by this service; users own its lifecycle.

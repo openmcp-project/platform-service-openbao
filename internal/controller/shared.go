@@ -79,8 +79,8 @@ func resolveRequeue(spec openbaov1alpha1.ServiceConfigSpec) time.Duration {
 // per-OpenBaoInstance override → ServiceConfig default → empty (openbao
 // picks a sensible default via its own naming code).
 func resolveAuthMountPrefix(cfg openbaov1alpha1.ServiceConfigSpec, inst *openbaov1alpha1.OpenBaoInstance) string {
-	if inst != nil && inst.Spec.AuthMountPrefix != "" {
-		return inst.Spec.AuthMountPrefix
+	if inst != nil && inst.Spec.Auth.JWT != nil && inst.Spec.Auth.JWT.MountPrefix != "" {
+		return inst.Spec.Auth.JWT.MountPrefix
 	}
 	return cfg.AuthMountPrefix
 }

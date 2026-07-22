@@ -84,14 +84,32 @@ func (r *ControlPlaneEntityReconciler) Reconcile(ctx context.Context, req reconc
 	}
 	ce.Status.ObservedGeneration = ce.Generation
 
-	cp, err := getControlPlane(ctx, r.OnboardingCluster.Client(), client.ObjectKey{Namespace: ce.Namespace, Name: ce.Spec.ControlPlaneRef.Name})
+	trust := &openbaov1alpha1.ControlPlaneTrust{}
+	trustKey := client.ObjectKey{Namespace: ce.Namespace, Name: ce.Spec.ControlPlaneTrustRef.Name}
+	if err := r.OnboardingCluster.Client().Get(ctx, trustKey, trust); err != nil {
+		if apierrors.IsNotFound(err) {
+			dependencyNotReady(&ce.Status.Conditions, ce.Generation,
+				openbaov1alpha1.ReasonDependencyNotFound,
+				fmt.Sprintf("ControlPlaneTrust %q not found in namespace %q", trustKey.Name, trustKey.Namespace))
+			return r.patchStatus(ctx, ce, cfg)
+		}
+		return ctrl.Result{}, fmt.Errorf("fetching ControlPlaneTrust: %w", err)
+	}
+	if !isConditionTrue(trust.Status.Conditions, openbaov1alpha1.ConditionTrustConfigured) {
+		dependencyNotReady(&ce.Status.Conditions, ce.Generation,
+			openbaov1alpha1.ReasonDependencyNotReady,
+			fmt.Sprintf("ControlPlaneTrust %q is not ready", trust.Name))
+		return r.patchStatus(ctx, ce, cfg)
+	}
+
+	cp, err := getControlPlane(ctx, r.OnboardingCluster.Client(), client.ObjectKey{Namespace: ce.Namespace, Name: trust.Spec.ControlPlaneRef.Name})
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if cp == nil {
 		dependencyNotReady(&ce.Status.Conditions, ce.Generation,
 			openbaov1alpha1.ReasonDependencyNotFound,
-			fmt.Sprintf("ControlPlane %q not found in namespace %q", ce.Spec.ControlPlaneRef.Name, ce.Namespace))
+			fmt.Sprintf("ControlPlane %q not found in namespace %q", trust.Spec.ControlPlaneRef.Name, ce.Namespace))
 		return r.patchStatus(ctx, ce, cfg)
 	}
 	issuer := controlPlaneIssuer(cp)
@@ -129,7 +147,10 @@ func (r *ControlPlaneEntityReconciler) Reconcile(ctx context.Context, req reconc
 		return r.patchStatus(ctx, ce, cfg)
 	}
 	identity, identityID, err := resolveServiceAccountIdentity(ctx, mcpCluster,
-		ce.Spec.ServiceAccountRef.Namespace, ce.Spec.ServiceAccountRef.Name, controlPlaneJWTAudience)
+		cp.Namespace, cp.Name,
+		ce.Spec.ServiceAccountRef.Namespace,
+		ce.Spec.ServiceAccountRef.Name,
+		resolveControlPlaneAudience(trust.Status.Audience))
 	if err != nil {
 		setCondition(&ce.Status.Conditions, ce.Generation, metav1.Condition{
 			Type:    openbaov1alpha1.ConditionIdentityResolved,

@@ -37,9 +37,9 @@ type ControlPlaneTrustSpec struct {
 	ControlPlaneRef LocalObjectReference `json:"controlPlaneRef"`
 
 	// audience is the JWT audience to require on ControlPlane
-	// ServiceAccount tokens presented to OpenBao. Empty means the
-	// controller derives a stable default from ControlPlane identity.
+	// ServiceAccount tokens presented to OpenBao.
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:default="open-control-plane-platform-service-openbao"
 	// +optional
 	Audience string `json:"audience,omitempty"`
 }

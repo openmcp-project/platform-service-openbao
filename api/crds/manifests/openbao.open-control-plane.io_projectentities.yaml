@@ -19,7 +19,7 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.openBaoRef.name
+    - jsonPath: .spec.openBaoInstanceRef.name
       name: OpenBao
       type: string
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
@@ -59,10 +59,10 @@ spec:
           spec:
             description: spec defines the desired state of ProjectEntity
             properties:
-              openBaoRef:
+              openBaoInstanceRef:
                 description: |-
-                  openBaoRef selects the cluster-scoped OpenBaoInstance this project
-                  anchor lives against.
+                  openBaoInstanceRef selects the cluster-scoped OpenBaoInstance this
+                  project anchor lives against.
                 properties:
                   name:
                     description: name is the name of the referenced object.
@@ -73,7 +73,7 @@ spec:
                 - name
                 type: object
             required:
-            - openBaoRef
+            - openBaoInstanceRef
             type: object
           status:
             description: status defines the observed state of ProjectEntity

@@ -20,6 +20,25 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// OpenBaoJWTAuthSpec configures JWT-auth-specific backend defaults. JWT is
+// currently the only implemented OpenBao auth strategy for this service, but it
+// is nested under spec.auth so future auth methods can be added without
+// overloading top-level OpenBaoInstance fields.
+type OpenBaoJWTAuthSpec struct {
+	// mountPrefix overrides the platform-wide default from ServiceConfig for
+	// JWT auth-mount paths generated against this instance.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	MountPrefix string `json:"mountPrefix,omitempty"`
+}
+
+// OpenBaoAuthSpec groups OpenBao authentication/trust strategy configuration.
+type OpenBaoAuthSpec struct {
+	// jwt configures JWT auth/trust behavior for this backend.
+	// +optional
+	JWT *OpenBaoJWTAuthSpec `json:"jwt,omitempty"`
+}
+
 // OpenBaoInstanceSpec is the cluster-scoped registration of an approved
 // OpenBao backend. Tenant resources reference an OpenBaoInstance by name
 // rather than supplying arbitrary URLs.
@@ -49,11 +68,9 @@ type OpenBaoInstanceSpec struct {
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
-	// authMountPrefix overrides the platform-wide default from
-	// ServiceConfig for auth-mount paths generated against this instance.
-	// +kubebuilder:validation:MaxLength=64
+	// auth groups backend authentication/trust strategy defaults.
 	// +optional
-	AuthMountPrefix string `json:"authMountPrefix,omitempty"`
+	Auth OpenBaoAuthSpec `json:"auth,omitempty"`
 }
 
 // OpenBaoInstanceStatus reports reachability and discovered capabilities of

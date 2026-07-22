@@ -16,6 +16,10 @@ spec:
   #   key: ca.crt
   # Optional OpenBao namespace scoping.
   # namespace: openbao/tenants/mcp
-  # Optional override for the auth-mount path prefix. Falls back to
-  # ServiceConfig.spec.authMountPrefix when unset.
-  # authMountPrefix: openbao
+  # Authentication/trust strategy defaults. JWT is the currently implemented
+  # strategy; nesting leaves room for future methods.
+  # auth:
+  #   jwt:
+  #     # Optional override for JWT auth-mount path prefix. Falls back to
+  #     # ServiceConfig.spec.authMountPrefix when unset.
+  #     mountPrefix: openbao

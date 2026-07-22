@@ -64,7 +64,7 @@ var _ = Describe("PolicyBinding controller", func() {
 		pb := &openbaov1alpha1.PolicyBinding{}
 		pb.Namespace = testProviderName
 		pb.Name = "pb-missing-entity"
-		pb.Spec.ControlPlaneEntityRef.Name = "does-not-exist"
+		pb.Spec.ControlPlaneEntityRefs = []openbaov1alpha1.LocalObjectReference{{Name: "does-not-exist"}}
 		pb.Spec.PolicyName = "kv-prod-read"
 		Expect(onboardingK8sClient.Create(ctx, pb)).To(Succeed())
 		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), pb) })
@@ -104,6 +104,11 @@ var _ = Describe("PolicyBinding controller", func() {
 		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), trust) })
 		trust.Status.AuthMountPath = "openbao-default-cp-policytest-abc"
 		trust.Status.ResolvedOpenBaoInstance = "obi-policytest"
+		apimeta.SetStatusCondition(&trust.Status.Conditions, metav1.Condition{
+			Type:   openbaov1alpha1.ConditionTrustConfigured,
+			Status: metav1.ConditionTrue,
+			Reason: openbaov1alpha1.ReasonReconciled,
+		})
 		Expect(onboardingK8sClient.Status().Update(ctx, trust)).To(Succeed())
 		// Pre-seed the auth mount inside the fake so EnsureJWTRole can
 		// attach the role to it.
@@ -112,7 +117,7 @@ var _ = Describe("PolicyBinding controller", func() {
 		ce := &openbaov1alpha1.ControlPlaneEntity{}
 		ce.Namespace = testProviderName
 		ce.Name = "ce-policytest"
-		ce.Spec.ControlPlaneRef.Name = "cp-policytest"
+		ce.Spec.ControlPlaneTrustRef.Name = "trust-policytest"
 		ce.Spec.ServiceAccountRef.Name = "eso-reader"
 		ce.Spec.ServiceAccountRef.Namespace = "external-secrets"
 		Expect(onboardingK8sClient.Create(ctx, ce)).To(Succeed())
@@ -131,7 +136,7 @@ var _ = Describe("PolicyBinding controller", func() {
 		pb := &openbaov1alpha1.PolicyBinding{}
 		pb.Namespace = testProviderName
 		pb.Name = "pb-policytest"
-		pb.Spec.ControlPlaneEntityRef.Name = "ce-policytest"
+		pb.Spec.ControlPlaneEntityRefs = []openbaov1alpha1.LocalObjectReference{{Name: "ce-policytest"}}
 		pb.Spec.PolicyName = "kv-prod-read" // NOT in fake.Policies
 		Expect(onboardingK8sClient.Create(ctx, pb)).To(Succeed())
 		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), pb) })
@@ -150,7 +155,8 @@ var _ = Describe("PolicyBinding controller", func() {
 
 		// The role was still created — this is the "one role per binding"
 		// behaviour the design mandates, independent of policy existence.
-		_, ok := fake.Role(trust.Status.AuthMountPath, got.Status.RoleName)
+		Expect(got.Status.Roles).To(HaveLen(1))
+		_, ok := fake.Role(trust.Status.AuthMountPath, got.Status.Roles[0].RoleName)
 		Expect(ok).To(BeTrue())
 		// spec.md Requirement 7: no token Secret was created.
 		Expect(secretExistsInNamespace(onboardingK8sClient, testProviderName)).To(BeFalse())

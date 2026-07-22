@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -102,78 +103,125 @@ func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.R
 		}
 	}
 
-	// Resolve ControlPlaneEntity in the same namespace.
-	ce := &openbaov1alpha1.ControlPlaneEntity{}
-	ceKey := types.NamespacedName{Namespace: pb.Namespace, Name: pb.Spec.ControlPlaneEntityRef.Name}
-	if err := r.OnboardingCluster.Client().Get(ctx, ceKey, ce); err != nil {
-		if apierrors.IsNotFound(err) {
-			dependencyNotReady(&pb.Status.Conditions, pb.Generation,
-				openbaov1alpha1.ReasonDependencyNotFound,
-				fmt.Sprintf("ControlPlaneEntity %q not found in namespace %q", ceKey.Name, ceKey.Namespace))
-			return r.patchStatus(ctx, pb, cfg)
+	roles := make([]openbaov1alpha1.PolicyBindingRoleStatus, 0, len(pb.Spec.ControlPlaneEntityRefs))
+	allRolesReady := true
+	dependencyMissing := false
+	var blockingMessages []string
+	policyKnown := true
+	policyExists := true
+	policyChecked := false
+
+	for _, entityRef := range pb.Spec.ControlPlaneEntityRefs {
+		roleStatus := openbaov1alpha1.PolicyBindingRoleStatus{ControlPlaneEntityRef: entityRef}
+		roleName := openbao.RoleName(pb.Namespace, pb.Name+"-"+entityRef.Name)
+		roleStatus.RoleName = roleName
+
+		ce := &openbaov1alpha1.ControlPlaneEntity{}
+		ceKey := types.NamespacedName{Namespace: pb.Namespace, Name: entityRef.Name}
+		if err := r.OnboardingCluster.Client().Get(ctx, ceKey, ce); err != nil {
+			allRolesReady = false
+			dependencyMissing = true
+			roleStatus.Message = fmt.Sprintf("ControlPlaneEntity %q not found in namespace %q", ceKey.Name, ceKey.Namespace)
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+			roles = append(roles, roleStatus)
+			continue
 		}
-		return ctrl.Result{}, fmt.Errorf("fetching ControlPlaneEntity: %w", err)
+		if !isConditionTrue(ce.Status.Conditions, openbaov1alpha1.ConditionIdentityResolved) || ce.Status.Identity == nil || ce.Status.Identity.Subject == "" {
+			allRolesReady = false
+			roleStatus.Message = fmt.Sprintf("ControlPlaneEntity %q has not resolved its identity yet", ce.Name)
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+			roles = append(roles, roleStatus)
+			continue
+		}
+
+		trust := &openbaov1alpha1.ControlPlaneTrust{}
+		trustKey := types.NamespacedName{Namespace: pb.Namespace, Name: ce.Spec.ControlPlaneTrustRef.Name}
+		if err := r.OnboardingCluster.Client().Get(ctx, trustKey, trust); err != nil {
+			allRolesReady = false
+			dependencyMissing = true
+			roleStatus.Message = fmt.Sprintf("ControlPlaneTrust %q not found in namespace %q", trustKey.Name, trustKey.Namespace)
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+			roles = append(roles, roleStatus)
+			continue
+		}
+		if trust.Status.AuthMountPath == "" || trust.Status.ResolvedOpenBaoInstance == "" || !isConditionTrue(trust.Status.Conditions, openbaov1alpha1.ConditionTrustConfigured) {
+			allRolesReady = false
+			roleStatus.Message = fmt.Sprintf("ControlPlaneTrust %q has no resolved auth mount yet", trust.Name)
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+			roles = append(roles, roleStatus)
+			continue
+		}
+		roleStatus.AuthMountPath = trust.Status.AuthMountPath
+
+		inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), trust.Status.ResolvedOpenBaoInstance)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if inst == nil || !isInstanceReachable(inst) {
+			allRolesReady = false
+			roleStatus.Message = "resolved OpenBaoInstance is not reachable"
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+			roles = append(roles, roleStatus)
+			continue
+		}
+		baoClient, err := r.ClientFactory(ctx, inst)
+		if err != nil {
+			allRolesReady = false
+			roleStatus.Message = err.Error()
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+			roles = append(roles, roleStatus)
+			continue
+		}
+
+		exists, err := baoClient.PolicyExists(ctx, pb.Spec.PolicyName)
+		policyChecked = true
+		switch {
+		case err != nil:
+			policyKnown = false
+			allRolesReady = false
+			roleStatus.Message = err.Error()
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+		case !exists.Known:
+			policyKnown = false
+		case !exists.Exists:
+			policyExists = false
+			allRolesReady = false
+			roleStatus.Message = fmt.Sprintf("OpenBao policy %q does not exist yet", pb.Spec.PolicyName)
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+		}
+
+		role := openbao.JWTRole{
+			Name:           roleName,
+			RoleType:       "jwt",
+			UserClaim:      "sub",
+			BoundSubject:   ce.Status.Identity.Subject,
+			BoundAudiences: []string{trust.Status.Audience},
+			TokenPolicies:  []string{pb.Spec.PolicyName},
+			TokenTTL:       pb.Spec.TTL,
+			TokenMaxTTL:    pb.Spec.MaxTTL,
+		}
+		if err := baoClient.EnsureJWTRole(ctx, trust.Status.AuthMountPath, role); err != nil {
+			allRolesReady = false
+			roleStatus.Message = err.Error()
+			blockingMessages = append(blockingMessages, roleStatus.Message)
+			roles = append(roles, roleStatus)
+			continue
+		}
+		roleStatus.Ready = roleStatus.Message == ""
+		roles = append(roles, roleStatus)
 	}
 
-	// Find the ControlPlaneTrust for the same ControlPlane in the same
-	// namespace. Standard convention: one Trust per ControlPlane per
-	// namespace.
-	trust, err := r.findTrustForControlPlane(ctx, pb.Namespace, ce.Spec.ControlPlaneRef.Name)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if trust == nil {
-		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
-			openbaov1alpha1.ReasonDependencyNotFound,
-			fmt.Sprintf("No ControlPlaneTrust found for ControlPlane %q in namespace %q", ce.Spec.ControlPlaneRef.Name, pb.Namespace))
-		return r.patchStatus(ctx, pb, cfg)
-	}
-	if trust.Status.AuthMountPath == "" || trust.Status.ResolvedOpenBaoInstance == "" {
-		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
-			openbaov1alpha1.ReasonDependencyNotReady,
-			fmt.Sprintf("ControlPlaneTrust %q has no resolved auth mount yet", trust.Name))
-		pb.Status.AuthMountPath = "" // stay empty until upstream is ready
-		return r.patchStatus(ctx, pb, cfg)
-	}
-	pb.Status.AuthMountPath = trust.Status.AuthMountPath
+	pb.Status.Roles = roles
 
-	// Get the OpenBao client for the resolved instance.
-	inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), trust.Status.ResolvedOpenBaoInstance)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if inst == nil || !isInstanceReachable(inst) {
-		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
-			openbaov1alpha1.ReasonOpenBaoUnreachable,
-			"resolved OpenBaoInstance is not reachable")
-		return r.patchStatus(ctx, pb, cfg)
-	}
-	baoClient, err := r.ClientFactory(ctx, inst)
-	if err != nil {
-		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
-			openbaov1alpha1.ReasonOpenBaoUnreachable, err.Error())
-		return r.patchStatus(ctx, pb, cfg)
-	}
-
-	// Policy existence check — never mutating.
-	exists, err := baoClient.PolicyExists(ctx, pb.Spec.PolicyName)
 	switch {
-	case err != nil:
-		setCondition(&pb.Status.Conditions, pb.Generation, metav1.Condition{
-			Type:    openbaov1alpha1.ConditionPolicyResolved,
-			Status:  metav1.ConditionUnknown,
-			Reason:  openbaov1alpha1.ReasonPolicyCheckSkipped,
-			Message: err.Error(),
-		})
-		pb.Status.PolicyExists = openbaov1alpha1.PolicyExistenceUnknown
-	case !exists.Known:
+	case !policyChecked || !policyKnown:
 		setCondition(&pb.Status.Conditions, pb.Generation, metav1.Condition{
 			Type:   openbaov1alpha1.ConditionPolicyResolved,
 			Status: metav1.ConditionUnknown,
 			Reason: openbaov1alpha1.ReasonPolicyCheckSkipped,
 		})
 		pb.Status.PolicyExists = openbaov1alpha1.PolicyExistenceUnknown
-	case !exists.Exists:
+	case !policyExists:
 		setCondition(&pb.Status.Conditions, pb.Generation, metav1.Condition{
 			Type:    openbaov1alpha1.ConditionPolicyResolved,
 			Status:  metav1.ConditionFalse,
@@ -190,42 +238,7 @@ func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.R
 		pb.Status.PolicyExists = openbaov1alpha1.PolicyExistenceTrue
 	}
 
-	// Do not create a role until we have a resolved identity; an unbound JWT
-	// role would be broader than intended.
-	if !isConditionTrue(ce.Status.Conditions, openbaov1alpha1.ConditionIdentityResolved) || ce.Status.Identity == nil || ce.Status.Identity.Subject == "" {
-		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
-			openbaov1alpha1.ReasonDependencyNotReady,
-			fmt.Sprintf("ControlPlaneEntity %q has not resolved its identity yet", ce.Name))
-		return r.patchStatus(ctx, pb, cfg)
-	}
-
-	// Deterministic role name — stable + surfaceable.
-	roleName := openbao.RoleName(pb.Namespace, pb.Name)
-	pb.Status.RoleName = roleName
-
-	role := openbao.JWTRole{
-		Name:          roleName,
-		RoleType:      "jwt",
-		UserClaim:     "sub",
-		TokenPolicies: []string{pb.Spec.PolicyName},
-		TokenTTL:      pb.Spec.TTL,
-		TokenMaxTTL:   pb.Spec.MaxTTL,
-	}
-	if trust.Status.Audience != "" {
-		role.BoundAudiences = []string{trust.Status.Audience}
-	}
-	if ce.Status.Identity != nil && ce.Status.Identity.Subject != "" {
-		role.BoundSubject = ce.Status.Identity.Subject
-	}
-	if err := baoClient.EnsureJWTRole(ctx, trust.Status.AuthMountPath, role); err != nil {
-		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
-			openbaov1alpha1.ReasonReconcileError, err.Error())
-		return r.patchStatus(ctx, pb, cfg)
-	}
-
-	// If the policy check said False, keep Ready=False so users see the
-	// missing policy without the role being marked healthy.
-	if pb.Status.PolicyExists == openbaov1alpha1.PolicyExistenceFalse {
+	if !policyExists {
 		setCondition(&pb.Status.Conditions, pb.Generation, metav1.Condition{
 			Type:    openbaov1alpha1.ConditionReady,
 			Status:  metav1.ConditionFalse,
@@ -234,43 +247,47 @@ func (r *PolicyBindingReconciler) Reconcile(ctx context.Context, req reconcile.R
 		})
 		return r.patchStatus(ctx, pb, cfg)
 	}
+	if !allRolesReady {
+		reason := openbaov1alpha1.ReasonDependencyNotReady
+		if dependencyMissing {
+			reason = openbaov1alpha1.ReasonDependencyNotFound
+		}
+		dependencyNotReady(&pb.Status.Conditions, pb.Generation,
+			reason,
+			strings.Join(blockingMessages, "; "))
+		return r.patchStatus(ctx, pb, cfg)
+	}
 	markReady(&pb.Status.Conditions, pb.Generation)
 	return r.patchStatus(ctx, pb, cfg)
 }
 
-// reconcileDelete removes the owned JWT role (only) and drops the
-// finalizer. Never touches the user-managed policy.
+// reconcileDelete removes owned JWT roles and drops the finalizer. Never touches
+// the user-managed policy.
 func (r *PolicyBindingReconciler) reconcileDelete(ctx context.Context, pb *openbaov1alpha1.PolicyBinding) (reconcile.Result, error) {
-	if pb.Status.RoleName != "" && pb.Status.AuthMountPath != "" {
-		// Find the trust to know which OpenBaoInstance to reach.
-		trust := &openbaov1alpha1.ControlPlaneTrust{}
-		// We can't reconstruct the trust name from PolicyBinding alone;
-		// derive OpenBaoInstance from status.AuthMountPath's owning trust
-		// by listing trusts in the same namespace whose status auth mount
-		// matches. If ambiguous we skip the OpenBao-side delete rather
-		// than delete the wrong thing.
-		trusts := &openbaov1alpha1.ControlPlaneTrustList{}
-		if err := r.OnboardingCluster.Client().List(ctx, trusts, client.InNamespace(pb.Namespace)); err == nil {
-			for i := range trusts.Items {
-				if trusts.Items[i].Status.AuthMountPath == pb.Status.AuthMountPath {
-					trust = &trusts.Items[i]
-					break
-				}
-			}
+	for _, roleStatus := range pb.Status.Roles {
+		if roleStatus.RoleName == "" || roleStatus.AuthMountPath == "" {
+			continue
 		}
-		if trust.Status.ResolvedOpenBaoInstance != "" {
-			inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), trust.Status.ResolvedOpenBaoInstance)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			if inst != nil && isInstanceReachable(inst) {
-				baoClient, err := r.ClientFactory(ctx, inst)
-				if err == nil {
-					if err := baoClient.DeleteJWTRole(ctx, pb.Status.AuthMountPath, pb.Status.RoleName); err != nil {
-						return ctrl.Result{}, fmt.Errorf("deleting JWT role: %w", err)
-					}
-				}
-			}
+		trust, err := r.findTrustForAuthMount(ctx, pb.Namespace, roleStatus.AuthMountPath)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if trust == nil || trust.Status.ResolvedOpenBaoInstance == "" {
+			continue
+		}
+		inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), trust.Status.ResolvedOpenBaoInstance)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if inst == nil || !isInstanceReachable(inst) {
+			continue
+		}
+		baoClient, err := r.ClientFactory(ctx, inst)
+		if err != nil {
+			continue
+		}
+		if err := baoClient.DeleteJWTRole(ctx, roleStatus.AuthMountPath, roleStatus.RoleName); err != nil {
+			return ctrl.Result{}, fmt.Errorf("deleting JWT role: %w", err)
 		}
 	}
 	if controllerutil.RemoveFinalizer(pb, openbaov1alpha1.FinalizerPolicyBinding) {
@@ -281,16 +298,13 @@ func (r *PolicyBindingReconciler) reconcileDelete(ctx context.Context, pb *openb
 	return ctrl.Result{}, nil
 }
 
-// findTrustForControlPlane finds the ControlPlaneTrust in the given
-// namespace whose ControlPlaneRef.Name matches cpName. Returns (nil, nil)
-// if none exists.
-func (r *PolicyBindingReconciler) findTrustForControlPlane(ctx context.Context, namespace, cpName string) (*openbaov1alpha1.ControlPlaneTrust, error) {
+func (r *PolicyBindingReconciler) findTrustForAuthMount(ctx context.Context, namespace, authMountPath string) (*openbaov1alpha1.ControlPlaneTrust, error) {
 	list := &openbaov1alpha1.ControlPlaneTrustList{}
 	if err := r.OnboardingCluster.Client().List(ctx, list, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("listing ControlPlaneTrusts: %w", err)
 	}
 	for i := range list.Items {
-		if list.Items[i].Spec.ControlPlaneRef.Name == cpName {
+		if list.Items[i].Status.AuthMountPath == authMountPath {
 			return &list.Items[i], nil
 		}
 	}

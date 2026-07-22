@@ -63,12 +63,20 @@ spec:
                 minLength: 1
                 pattern: ^https?://.+
                 type: string
-              authMountPrefix:
-                description: |-
-                  authMountPrefix overrides the platform-wide default from
-                  ServiceConfig for auth-mount paths generated against this instance.
-                maxLength: 64
-                type: string
+              auth:
+                description: auth groups backend authentication/trust strategy defaults.
+                properties:
+                  jwt:
+                    description: jwt configures JWT auth/trust behavior for this backend.
+                    properties:
+                      mountPrefix:
+                        description: |-
+                          mountPrefix overrides the platform-wide default from ServiceConfig for
+                          JWT auth-mount paths generated against this instance.
+                        maxLength: 64
+                        type: string
+                    type: object
+                type: object
               caBundleRef:
                 description: |-
                   caBundleRef optionally references a Secret or ConfigMap in the

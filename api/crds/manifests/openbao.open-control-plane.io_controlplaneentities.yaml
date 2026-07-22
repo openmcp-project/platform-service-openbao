@@ -19,8 +19,8 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.controlPlaneRef.name
-      name: ControlPlane
+    - jsonPath: .spec.controlPlaneTrustRef.name
+      name: Trust
       type: string
     - jsonPath: .spec.serviceAccountRef.name
       name: ServiceAccount
@@ -61,10 +61,11 @@ spec:
           spec:
             description: spec defines the desired state of ControlPlaneEntity
             properties:
-              controlPlaneRef:
+              controlPlaneTrustRef:
                 description: |-
-                  controlPlaneRef selects the target ControlPlane in the same
-                  namespace as this ControlPlaneEntity.
+                  controlPlaneTrustRef selects the ControlPlaneTrust in the same namespace
+                  as this ControlPlaneEntity. The trust identifies the target ControlPlane,
+                  OpenBaoInstance, and JWT audience context for this identity.
                 properties:
                   name:
                     description: name is the name of the referenced object.
@@ -95,7 +96,7 @@ spec:
                 - namespace
                 type: object
             required:
-            - controlPlaneRef
+            - controlPlaneTrustRef
             - serviceAccountRef
             type: object
           status:
@@ -168,6 +169,11 @@ spec:
                   identity summarises the resolved ServiceAccount identity (sub, iss,
                   aud). Never contains the JWT itself.
                 properties:
+                  alias:
+                    description: |-
+                      alias is the stable OpenMCP/OpenBao identity alias for this ServiceAccount,
+                      formatted as ocp:<project>:<workspace>:<cp-name>:<sa-namespace>:<sa-name>.
+                    type: string
                   audiences:
                     description: audiences are the JWT `aud` claim values.
                     items:

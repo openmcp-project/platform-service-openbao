@@ -86,14 +86,14 @@ func (r *ProjectEntityReconciler) Reconcile(ctx context.Context, req reconcile.R
 
 	pe.Status.ObservedGeneration = pe.Generation
 
-	inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), pe.Spec.OpenBaoRef.Name)
+	inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), pe.Spec.OpenBaoInstanceRef.Name)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if inst == nil {
 		dependencyNotReady(&pe.Status.Conditions, pe.Generation,
 			openbaov1alpha1.ReasonDependencyNotFound,
-			fmt.Sprintf("OpenBaoInstance %q not found on the platform cluster", pe.Spec.OpenBaoRef.Name))
+			fmt.Sprintf("OpenBaoInstance %q not found on the platform cluster", pe.Spec.OpenBaoInstanceRef.Name))
 		return r.patchStatus(ctx, pe, cfg)
 	}
 	pe.Status.ResolvedOpenBaoRef = inst.Name

@@ -23,10 +23,10 @@ import (
 // ProjectEntitySpec anchors a project-level OpenBao identity to an approved
 // OpenBaoInstance. It does not itself grant access to any policy.
 type ProjectEntitySpec struct {
-	// openBaoRef selects the cluster-scoped OpenBaoInstance this project
-	// anchor lives against.
+	// openBaoInstanceRef selects the cluster-scoped OpenBaoInstance this
+	// project anchor lives against.
 	// +required
-	OpenBaoRef LocalObjectReference `json:"openBaoRef"`
+	OpenBaoInstanceRef LocalObjectReference `json:"openBaoInstanceRef"`
 }
 
 // ProjectEntityStatus reports resolved identity data for the anchor.
@@ -63,7 +63,7 @@ type ProjectEntityStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=pje
 // +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
-// +kubebuilder:printcolumn:name="OpenBao",type=string,JSONPath=".spec.openBaoRef.name"
+// +kubebuilder:printcolumn:name="OpenBao",type=string,JSONPath=".spec.openBaoInstanceRef.name"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="EntityID",type=string,JSONPath=".status.entityID"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"

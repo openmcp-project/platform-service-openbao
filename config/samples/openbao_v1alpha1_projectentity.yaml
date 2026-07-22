@@ -8,5 +8,5 @@ metadata:
   namespace: project-team-a
 spec:
   # References the approved cluster-scoped OpenBaoInstance.
-  openBaoRef:
+  openBaoInstanceRef:
     name: default

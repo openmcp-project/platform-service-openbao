@@ -45,6 +45,7 @@ import (
 	providerscheme "github.com/openmcp-project/platform-service-openbao/api/install"
 	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
 	"github.com/openmcp-project/platform-service-openbao/internal/controller"
+	openbaowebhook "github.com/openmcp-project/platform-service-openbao/internal/webhook"
 )
 
 // RawRunOptions are the raw flag values for `run`. Kept alongside quota's
@@ -312,6 +313,16 @@ func (o *RunOptions) Run(ctx context.Context) error {
 	)
 	if err := policyBindingReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up PolicyBinding controller: %w", err)
+	}
+
+	if err := openbaowebhook.SetupProjectEntityWebhookWithManager(mgr); err != nil {
+		return fmt.Errorf("setting up ProjectEntity webhook: %w", err)
+	}
+	if err := openbaowebhook.SetupControlPlaneTrustWebhookWithManager(mgr); err != nil {
+		return fmt.Errorf("setting up ControlPlaneTrust webhook: %w", err)
+	}
+	if err := openbaowebhook.SetupControlPlaneEntityWebhookWithManager(mgr); err != nil {
+		return fmt.Errorf("setting up ControlPlaneEntity webhook: %w", err)
 	}
 
 	if o.MetricsCertWatcher != nil {

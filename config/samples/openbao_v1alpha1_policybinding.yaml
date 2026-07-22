@@ -7,14 +7,15 @@ metadata:
   name: eso-reader-kv-prod
   namespace: project-team-a--ws-prod
 spec:
-  # ControlPlaneEntity in the same namespace.
-  controlPlaneEntityRef:
-    name: eso-reader
   # Free-form name of a user-managed OpenBao policy. If the policy does
   # not exist, this binding still reconciles: PolicyResolved surfaces as
   # False with reason PolicyNotFound so operators see the missing policy
   # without an admission rejection.
   policyName: kv-prod-read
+  # ControlPlaneEntities in the same namespace. The binding owns one generated
+  # OpenBao JWT role per referenced entity.
+  controlPlaneEntityRefs:
+    - name: eso-reader
   # Optional token TTL overrides.
   # ttl: 30m
   # maxTTL: 2h
@@ -24,7 +25,7 @@ spec:
 # NOT created by platform-service-openbao — shown here so operators can
 # copy the status fields they need. Read from:
 #   ControlPlaneTrust.status.authMountPath  (path segment after "auth/")
-#   PolicyBinding.status.roleName           (the JWT role name)
+#   PolicyBinding.status.roles[].roleName   (the JWT role name)
 #   PolicyBinding.status.policyExists       (True|False|Unknown gate)
 #
 # apiVersion: external-secrets.io/v1beta1
@@ -41,7 +42,7 @@ spec:
 #       auth:
 #         jwt:
 #           path: <ControlPlaneTrust.status.authMountPath>
-#           role: <PolicyBinding.status.roleName>
+#           role: <PolicyBinding.status.roles[0].roleName>
 #           kubernetesServiceAccountToken:
 #             serviceAccountRef:
 #               name: external-secrets

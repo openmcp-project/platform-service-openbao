@@ -24,10 +24,11 @@ import (
 // target ControlPlane. The system does NOT create or manage that
 // ServiceAccount.
 type ControlPlaneEntitySpec struct {
-	// controlPlaneRef selects the target ControlPlane in the same
-	// namespace as this ControlPlaneEntity.
+	// controlPlaneTrustRef selects the ControlPlaneTrust in the same namespace
+	// as this ControlPlaneEntity. The trust identifies the target ControlPlane,
+	// OpenBaoInstance, and JWT audience context for this identity.
 	// +required
-	ControlPlaneRef LocalObjectReference `json:"controlPlaneRef"`
+	ControlPlaneTrustRef LocalObjectReference `json:"controlPlaneTrustRef"`
 
 	// serviceAccountRef is the existing ServiceAccount inside the target
 	// ControlPlane by namespace/name. Its lifecycle is external to this
@@ -40,6 +41,11 @@ type ControlPlaneEntitySpec struct {
 // derived from a short-lived ServiceAccount JWT. It is safe to expose in
 // status; it never includes the JWT itself.
 type ServiceAccountIdentity struct {
+	// alias is the stable OpenMCP/OpenBao identity alias for this ServiceAccount,
+	// formatted as ocp:<project>:<workspace>:<cp-name>:<sa-namespace>:<sa-name>.
+	// +optional
+	Alias string `json:"alias,omitempty"`
+
 	// subject is the JWT `sub` claim.
 	// +optional
 	Subject string `json:"subject,omitempty"`
@@ -82,7 +88,7 @@ type ControlPlaneEntityStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=cpe
 // +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
-// +kubebuilder:printcolumn:name="ControlPlane",type=string,JSONPath=".spec.controlPlaneRef.name"
+// +kubebuilder:printcolumn:name="Trust",type=string,JSONPath=".spec.controlPlaneTrustRef.name"
 // +kubebuilder:printcolumn:name="ServiceAccount",type=string,JSONPath=".spec.serviceAccountRef.name"
 // +kubebuilder:printcolumn:name="Identity",type=string,JSONPath=".status.conditions[?(@.type=='IdentityResolved')].status"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"

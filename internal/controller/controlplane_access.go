@@ -51,7 +51,7 @@ import (
 	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
 )
 
-const controlPlaneJWTAudience = "openbao"
+const controlPlaneJWTAudience = "open-control-plane-platform-service-openbao"
 
 func resolveControlPlaneAudience(audience string) string {
 	if strings.TrimSpace(audience) != "" {
@@ -134,7 +134,7 @@ func serviceAccountIdentityPermissions(saNamespace string) []clustersv1alpha1.Pe
 	}}
 }
 
-func resolveServiceAccountIdentity(ctx context.Context, mcpCluster *clusters.Cluster, namespace, name, audience string) (*openbaov1alpha1.ServiceAccountIdentity, string, error) {
+func resolveServiceAccountIdentity(ctx context.Context, mcpCluster *clusters.Cluster, cpNamespace, cpName, namespace, name, audience string) (*openbaov1alpha1.ServiceAccountIdentity, string, error) {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
 		return nil, "", fmt.Errorf("serviceAccountRef namespace and name are required")
 	}
@@ -159,6 +159,7 @@ func resolveServiceAccountIdentity(ctx context.Context, mcpCluster *clusters.Clu
 	if err != nil {
 		return nil, "", err
 	}
+	identity.Alias = controlPlaneEntityAlias(cpNamespace, cpName, namespace, name)
 	identityID := deterministicIdentityID(identity)
 	return identity, identityID, nil
 }
@@ -207,13 +208,27 @@ func normalizeAudiences(raw any) []string {
 	}
 }
 
+func controlPlaneEntityAlias(cpNamespace, cpName, serviceAccountNamespace, serviceAccountName string) string {
+	project, workspace := projectWorkspaceFromNamespace(cpNamespace)
+	return strings.Join([]string{"ocp", project, workspace, cpName, serviceAccountNamespace, serviceAccountName}, ":")
+}
+
+func projectWorkspaceFromNamespace(namespace string) (string, string) {
+	projectPart, workspacePart, ok := strings.Cut(namespace, "--ws-")
+	if !ok {
+		return namespace, ""
+	}
+	project := strings.TrimPrefix(projectPart, "project-")
+	return project, workspacePart
+}
+
 func deterministicIdentityID(identity *openbaov1alpha1.ServiceAccountIdentity) string {
 	if identity == nil {
 		return ""
 	}
 	audiences := append([]string(nil), identity.Audiences...)
 	sort.Strings(audiences)
-	sum := sha256.Sum256([]byte(identity.Issuer + "\x00" + identity.Subject + "\x00" + strings.Join(audiences, ",")))
+	sum := sha256.Sum256([]byte(identity.Alias + "\x00" + identity.Issuer + "\x00" + identity.Subject + "\x00" + strings.Join(audiences, ",")))
 	return hex.EncodeToString(sum[:])[:16]
 }
 

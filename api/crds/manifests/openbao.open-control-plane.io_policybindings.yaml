@@ -19,14 +19,11 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.controlPlaneEntityRef.name
-      name: Entity
-      type: string
     - jsonPath: .spec.policyName
       name: Policy
       type: string
-    - jsonPath: .status.roleName
-      name: Role
+    - jsonPath: .status.roles[*].roleName
+      name: Roles
       type: string
     - jsonPath: .status.policyExists
       name: PolicyExists
@@ -65,23 +62,33 @@ spec:
           spec:
             description: spec defines the desired state of PolicyBinding
             properties:
-              controlPlaneEntityRef:
+              controlPlaneEntityRefs:
                 description: |-
-                  controlPlaneEntityRef selects the ControlPlaneEntity whose
-                  ServiceAccount identity this binding grants access to. Must live in
-                  the same namespace as the PolicyBinding.
-                properties:
-                  name:
-                    description: name is the name of the referenced object.
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                required:
+                  controlPlaneEntityRefs selects ControlPlaneEntity resources in the same
+                  namespace as the PolicyBinding. The binding owns one generated OpenBao JWT
+                  role per referenced entity.
+                items:
+                  description: |-
+                    LocalObjectReference references an object in the same namespace as the
+                    referrer, or (when the referrer is namespaced and the target is
+                    cluster-scoped) any cluster-scoped object of the expected kind.
+                  properties:
+                    name:
+                      description: name is the name of the referenced object.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
                 - name
-                type: object
+                x-kubernetes-list-type: map
               maxTTL:
                 description: |-
-                  maxTTL overrides the JWT role's maximum token TTL. Empty means the
+                  maxTTL overrides the JWT roles' maximum token TTL. Empty means the
                   OpenBao default.
                 pattern: ^([0-9]+(ns|us|µs|ms|s|m|h))+$
                 type: string
@@ -89,29 +96,24 @@ spec:
                 description: |-
                   policyName is the free-form name of a user-managed OpenBao policy.
                   The controller does not create, modify, or delete this policy; it
-                  only names it on the generated JWT role. Missing policies surface as
+                  only names it on generated JWT roles. Missing policies surface as
                   a PolicyResolved=False status condition, not as admission rejection.
                 maxLength: 253
                 minLength: 1
                 type: string
               ttl:
                 description: |-
-                  ttl overrides the JWT role's default token TTL. Empty means the
+                  ttl overrides the JWT roles' default token TTL. Empty means the
                   OpenBao default.
                 pattern: ^([0-9]+(ns|us|µs|ms|s|m|h))+$
                 type: string
             required:
-            - controlPlaneEntityRef
+            - controlPlaneEntityRefs
             - policyName
             type: object
           status:
             description: status defines the observed state of PolicyBinding
             properties:
-              authMountPath:
-                description: |-
-                  authMountPath is the OpenBao JWT auth mount path this binding's role
-                  lives under. Inherited from the resolved ControlPlaneTrust.
-                type: string
               conditions:
                 description: |-
                   conditions describe the current state of the PolicyBinding. Types
@@ -192,11 +194,49 @@ spec:
               policyName:
                 description: policyName mirrors spec.policyName once resolved.
                 type: string
-              roleName:
+              roles:
                 description: |-
-                  roleName is the generated OpenBao JWT role name owned by this
-                  binding. Deterministic and stable across reconciles.
-                type: string
+                  roles reports one generated OpenBao JWT role per referenced
+                  ControlPlaneEntity.
+                items:
+                  description: |-
+                    PolicyBindingRoleStatus describes the generated role for one referenced
+                    ControlPlaneEntity.
+                  properties:
+                    authMountPath:
+                      description: authMountPath is the OpenBao JWT auth mount path
+                        this role lives under.
+                      type: string
+                    controlPlaneEntityRef:
+                      description: controlPlaneEntityRef identifies the entity this
+                        role belongs to.
+                      properties:
+                        name:
+                          description: name is the name of the referenced object.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    message:
+                      description: message contains an actionable error for this role
+                        when ready is false.
+                      type: string
+                    ready:
+                      description: ready indicates whether this role was successfully
+                        reconciled.
+                      type: boolean
+                    roleName:
+                      description: |-
+                        roleName is the generated OpenBao JWT role name. Deterministic and stable
+                        across reconciles.
+                      type: string
+                  required:
+                  - controlPlaneEntityRef
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         required:
         - spec

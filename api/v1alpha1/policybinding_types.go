@@ -31,56 +31,81 @@ const (
 	PolicyExistenceUnknown PolicyExistence = "Unknown"
 )
 
-// PolicyBindingSpec binds one ControlPlaneEntity to one user-managed
-// OpenBao policy by name. Exactly one OpenBao JWT role is created per
-// PolicyBinding.
+// PolicyBindingSpec binds one user-managed OpenBao policy to one or more
+// ControlPlaneEntity identities. The controller creates one OpenBao JWT role
+// per listed ControlPlaneEntity so each ServiceAccount remains independently
+// constrained by subject and audience.
 type PolicyBindingSpec struct {
-	// controlPlaneEntityRef selects the ControlPlaneEntity whose
-	// ServiceAccount identity this binding grants access to. Must live in
-	// the same namespace as the PolicyBinding.
-	// +required
-	ControlPlaneEntityRef LocalObjectReference `json:"controlPlaneEntityRef"`
-
 	// policyName is the free-form name of a user-managed OpenBao policy.
 	// The controller does not create, modify, or delete this policy; it
-	// only names it on the generated JWT role. Missing policies surface as
+	// only names it on generated JWT roles. Missing policies surface as
 	// a PolicyResolved=False status condition, not as admission rejection.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +required
 	PolicyName string `json:"policyName"`
 
-	// ttl overrides the JWT role's default token TTL. Empty means the
+	// controlPlaneEntityRefs selects ControlPlaneEntity resources in the same
+	// namespace as the PolicyBinding. The binding owns one generated OpenBao JWT
+	// role per referenced entity.
+	// +kubebuilder:validation:MinItems=1
+	// +listType=map
+	// +listMapKey=name
+	// +required
+	ControlPlaneEntityRefs []LocalObjectReference `json:"controlPlaneEntityRefs"`
+
+	// ttl overrides the JWT roles' default token TTL. Empty means the
 	// OpenBao default.
 	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	TTL string `json:"ttl,omitempty"`
 
-	// maxTTL overrides the JWT role's maximum token TTL. Empty means the
+	// maxTTL overrides the JWT roles' maximum token TTL. Empty means the
 	// OpenBao default.
 	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	MaxTTL string `json:"maxTTL,omitempty"`
 }
 
-// PolicyBindingStatus is user-facing: users read roleName, authMountPath,
-// and policyExists here to configure ESO SecretStore or another OpenBao
-// JWT-auth client.
+// PolicyBindingRoleStatus describes the generated role for one referenced
+// ControlPlaneEntity.
+type PolicyBindingRoleStatus struct {
+	// controlPlaneEntityRef identifies the entity this role belongs to.
+	// +required
+	ControlPlaneEntityRef LocalObjectReference `json:"controlPlaneEntityRef"`
+
+	// roleName is the generated OpenBao JWT role name. Deterministic and stable
+	// across reconciles.
+	// +optional
+	RoleName string `json:"roleName,omitempty"`
+
+	// authMountPath is the OpenBao JWT auth mount path this role lives under.
+	// +optional
+	AuthMountPath string `json:"authMountPath,omitempty"`
+
+	// ready indicates whether this role was successfully reconciled.
+	// +optional
+	Ready bool `json:"ready,omitempty"`
+
+	// message contains an actionable error for this role when ready is false.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// PolicyBindingStatus is user-facing: users read roles[].roleName,
+// roles[].authMountPath, and policyExists here to configure ESO SecretStore or
+// another OpenBao JWT-auth client.
 type PolicyBindingStatus struct {
 	// observedGeneration is the .metadata.generation the controller last
 	// reconciled.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// roleName is the generated OpenBao JWT role name owned by this
-	// binding. Deterministic and stable across reconciles.
+	// roles reports one generated OpenBao JWT role per referenced
+	// ControlPlaneEntity.
+	// +listType=atomic
 	// +optional
-	RoleName string `json:"roleName,omitempty"`
-
-	// authMountPath is the OpenBao JWT auth mount path this binding's role
-	// lives under. Inherited from the resolved ControlPlaneTrust.
-	// +optional
-	AuthMountPath string `json:"authMountPath,omitempty"`
+	Roles []PolicyBindingRoleStatus `json:"roles,omitempty"`
 
 	// policyName mirrors spec.policyName once resolved.
 	// +optional
@@ -103,9 +128,8 @@ type PolicyBindingStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=pb
 // +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
-// +kubebuilder:printcolumn:name="Entity",type=string,JSONPath=".spec.controlPlaneEntityRef.name"
 // +kubebuilder:printcolumn:name="Policy",type=string,JSONPath=".spec.policyName"
-// +kubebuilder:printcolumn:name="Role",type=string,JSONPath=".status.roleName"
+// +kubebuilder:printcolumn:name="Roles",type=string,JSONPath=".status.roles[*].roleName"
 // +kubebuilder:printcolumn:name="PolicyExists",type=string,JSONPath=".status.policyExists"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
