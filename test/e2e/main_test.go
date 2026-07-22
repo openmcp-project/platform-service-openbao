@@ -92,8 +92,7 @@ func TestMain(m *testing.M) {
 // reports success.
 func run(ctx context.Context, m *testing.M) error {
 	if ok, reason := hasEnoughDockerMemory(ctx); !ok {
-		klog.Warningf("Skipping full OpenMCP e2e: %s", reason)
-		return nil
+		return fmt.Errorf("Docker does not satisfy e2e requirements: %s", reason)
 	}
 
 	// 1. Use the standard Docker network used by Kind. Nested clusters created

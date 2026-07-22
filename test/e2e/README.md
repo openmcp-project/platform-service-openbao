@@ -38,6 +38,8 @@ Subsequent runs on a warm cache take 2-3 minutes.
 | ------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `IMG`               | (built by `TestMain`)      | Pre-built manager image tag. When unset, `TestMain` runs `make docker-build IMG=platform-service-openbao:e2e` before Kind starts.                  |
 | `E2E_BACKEND_IMAGE` | `openbao/openbao:latest`   | Backend image. Any OpenBao or Vault image works; the wrapper detects which entrypoint (`bao server -dev` vs `vault server -dev`) by image path.    |
+| `E2E_MIN_DOCKER_MEMORY_GIB` | `6` | Minimum Docker memory in GiB required for the full nested-kind OpenMCP bootstrap. |
+| `E2E_SKIP_DOCKER_MEMORY_CHECK` | `false` | Set to `true` to force the full e2e even when Docker reports less memory than required. |
 
 ## Running against HashiCorp Vault
 
@@ -53,7 +55,7 @@ this switch keeps the compatibility claim honest.
 
 ```
                 ┌────────────────────────────────────────────┐
-                │        Docker network (dynamic name)       │
+                │        Docker network (kind)               │
                 │                                            │
                 │  ┌──────────────────┐   ┌───────────────┐  │
                 │  │ Kind cluster     │   │ OpenBao / Vault│  │
@@ -75,10 +77,11 @@ this switch keeps the compatibility claim honest.
                                   (seed policy, read role)
 ```
 
-Kind and the backend container share a Docker network so the manager
-pod can reach the backend by DNS alias (`http://openbao:8200`). The
-network is created by testcontainers-go and passed to Kind via the
-`KIND_EXPERIMENTAL_DOCKER_NETWORK` environment variable in `TestMain`.
+Kind and the backend container share the standard Docker `kind` network so
+the manager pod can reach the backend by DNS alias (`http://openbao:8200`) and
+nested kind clusters created by `cluster-provider-kind` remain reachable from
+the platform cluster. `TestMain` sets `KIND_EXPERIMENTAL_DOCKER_NETWORK=kind`
+and creates the network if it does not exist.
 
 ## What the suite covers today
 
@@ -117,6 +120,7 @@ ready" path; both intentionally report `Ready=False`.
 - **Backend never becomes reachable**: `docker ps` and check the
   `openbao/openbao:latest` container is running on the ephemeral Kind
   network. `docker logs <container>` shows dev-server startup errors.
+- **Docker does not satisfy e2e requirements / low memory**: increase Docker/Colima memory to at least 6GiB, or set `E2E_SKIP_DOCKER_MEMORY_CHECK=true` to force the run.
 - **Kind cluster leaks after a Ctrl-C**: `kind delete clusters --all`.
   The suite normally cleans up via `envfuncs.DestroyCluster`, but a
   hard interrupt bypasses that path.
