@@ -119,7 +119,12 @@ func patchControlPlaneIssuer(mcpName string) func(context.Context, *testing.T, *
 		if err := onboarding.Client().Resources().Get(ctx, mcpName, "default", cp); err != nil {
 			t.Fatalf("get ControlPlane %s: %v", mcpName, err)
 		}
-		issuer := fmt.Sprintf("https://issuer.e2e.invalid/%s", mcpName)
+		// The controller currently writes jwks_url as issuer + "/jwks" and
+		// OpenBao/Vault validates that URL during configuration. Use a public,
+		// stable JWKS endpoint for this reconciliation-level e2e. The test does
+		// not use this issuer for a real JWT login; it verifies trust config and
+		// role creation.
+		issuer := "https://token.actions.githubusercontent.com/.well-known"
 		if err := unstructured.SetNestedSlice(cp.Object, []any{map[string]any{
 			"name": "service-account-issuer",
 			"url":  issuer,
