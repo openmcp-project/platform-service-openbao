@@ -12,7 +12,6 @@ rules:
   - openbaoinstances
   - policybindings
   - projectentities
-  - providerconfigs
   verbs:
   - create
   - delete
@@ -29,7 +28,6 @@ rules:
   - openbaoinstances/finalizers
   - policybindings/finalizers
   - projectentities/finalizers
-  - providerconfigs/finalizers
   verbs:
   - update
 - apiGroups:
@@ -40,7 +38,6 @@ rules:
   - openbaoinstances/status
   - policybindings/status
   - projectentities/status
-  - providerconfigs/status
   verbs:
   - get
   - patch

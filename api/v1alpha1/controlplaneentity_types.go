@@ -20,38 +20,58 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// ControlPlaneEntitySpec defines the desired state of ControlPlaneEntity
+// ControlPlaneEntitySpec references an existing ServiceAccount inside the
+// target ControlPlane. The system does NOT create or manage that
+// ServiceAccount.
 type ControlPlaneEntitySpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// controlPlaneRef selects the target ControlPlane in the same
+	// namespace as this ControlPlaneEntity.
+	// +required
+	ControlPlaneRef LocalObjectReference `json:"controlPlaneRef"`
 
-	// foo is an example field of ControlPlaneEntity. Edit controlplaneentity_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// serviceAccountRef is the existing ServiceAccount inside the target
+	// ControlPlane by namespace/name. Its lifecycle is external to this
+	// service.
+	// +required
+	ServiceAccountRef NamespacedObjectReference `json:"serviceAccountRef"`
 }
 
-// ControlPlaneEntityStatus defines the observed state of ControlPlaneEntity.
+// ServiceAccountIdentity is a non-sensitive summary of the identity claims
+// derived from a short-lived ServiceAccount JWT. It is safe to expose in
+// status; it never includes the JWT itself.
+type ServiceAccountIdentity struct {
+	// subject is the JWT `sub` claim.
+	// +optional
+	Subject string `json:"subject,omitempty"`
+
+	// issuer is the JWT `iss` claim.
+	// +optional
+	Issuer string `json:"issuer,omitempty"`
+
+	// audiences are the JWT `aud` claim values.
+	// +optional
+	Audiences []string `json:"audiences,omitempty"`
+}
+
+// ControlPlaneEntityStatus surfaces resolved SA identity data.
 type ControlPlaneEntityStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// observedGeneration is the .metadata.generation the controller last
+	// reconciled.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// identity summarises the resolved ServiceAccount identity (sub, iss,
+	// aud). Never contains the JWT itself.
+	// +optional
+	Identity *ServiceAccountIdentity `json:"identity,omitempty"`
 
-	// conditions represent the current state of the ControlPlaneEntity resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// identityID is a deterministic identifier derived from the resolved
+	// identity claims. Useful for audit/troubleshooting.
+	// +optional
+	IdentityID string `json:"identityID,omitempty"`
+
+	// conditions describe the current state of the ControlPlaneEntity.
+	// Types used: "Ready", "IdentityResolved", "DependencyReady".
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -60,8 +80,16 @@ type ControlPlaneEntityStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=cpe
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
+// +kubebuilder:printcolumn:name="ControlPlane",type=string,JSONPath=".spec.controlPlaneRef.name"
+// +kubebuilder:printcolumn:name="ServiceAccount",type=string,JSONPath=".spec.serviceAccountRef.name"
+// +kubebuilder:printcolumn:name="Identity",type=string,JSONPath=".status.conditions[?(@.type=='IdentityResolved')].status"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
-// ControlPlaneEntity is the Schema for the controlplaneentities API
+// ControlPlaneEntity references an existing ServiceAccount inside a target
+// ControlPlane. Referenced only; never created by this controller.
 type ControlPlaneEntity struct {
 	metav1.TypeMeta `json:",inline"`
 

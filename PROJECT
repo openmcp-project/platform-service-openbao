@@ -14,7 +14,7 @@ resources:
   controller: true
   domain: open-control-plane.io
   group: openbao
-  kind: ProviderConfig
+  kind: ServiceConfig
   path: github.com/openmcp-project/platform-service-openbao/api/v1alpha1
   version: v1alpha1
 - api:

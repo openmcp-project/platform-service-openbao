@@ -18,46 +18,111 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
-	"k8s.io/apimachinery/pkg/runtime"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/openmcp-project/controller-utils/pkg/clusters"
+	"github.com/openmcp-project/controller-utils/pkg/logging"
 
 	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
 )
-
-// ProjectEntityReconciler reconciles a ProjectEntity object
-type ProjectEntityReconciler struct {
-	client.Client
-	Scheme *runtime.Scheme
-}
 
 // +kubebuilder:rbac:groups=openbao.open-control-plane.io,resources=projectentities,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=openbao.open-control-plane.io,resources=projectentities/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=openbao.open-control-plane.io,resources=projectentities/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the ProjectEntity object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
-func (r *ProjectEntityReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
-
-	// TODO(user): your logic here
-
-	return ctrl.Result{}, nil
+// ProjectEntityReconciler reconciles the project-level identity anchor.
+// It lives on the onboarding cluster; the referenced OpenBaoInstance
+// lives on the platform cluster.
+type ProjectEntityReconciler struct {
+	PlatformCluster   *clusters.Cluster
+	OnboardingCluster *clusters.Cluster
+	ProviderName      string
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// NewProjectEntityReconciler builds a ProjectEntity reconciler wired to
+// both clusters.
+func NewProjectEntityReconciler(platform, onboarding *clusters.Cluster, providerName string) *ProjectEntityReconciler {
+	return &ProjectEntityReconciler{
+		PlatformCluster:   platform,
+		OnboardingCluster: onboarding,
+		ProviderName:      providerName,
+	}
+}
+
+// Reconcile resolves .spec.openBaoRef against the platform cluster and
+// mirrors readiness. It does NOT materialise OpenBao entity/group objects
+// yet — those are a follow-up (design.md open question: "Whether
+// ProjectEntity owns OpenBao entity/group objects directly"). Current
+// contract: DependencyReady tracks the referenced OpenBaoInstance's
+// OpenBaoReachable condition; Ready follows that.
+func (r *ProjectEntityReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	log := logging.FromContextOrDiscard(ctx).WithName("projectentity").WithValues("projectentity", req.NamespacedName.String())
+	ctx = logging.NewContext(ctx, log)
+
+	pe := &openbaov1alpha1.ProjectEntity{}
+	if err := r.OnboardingCluster.Client().Get(ctx, req.NamespacedName, pe); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("fetching ProjectEntity: %w", err)
+	}
+	if !pe.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
+	cfg, err := getServiceConfig(ctx, r.PlatformCluster.Client(), r.ProviderName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	pe.Status.ObservedGeneration = pe.Generation
+
+	inst, err := getOpenBaoInstance(ctx, r.PlatformCluster.Client(), pe.Spec.OpenBaoRef.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if inst == nil {
+		dependencyNotReady(&pe.Status.Conditions, pe.Generation,
+			openbaov1alpha1.ReasonDependencyNotFound,
+			fmt.Sprintf("OpenBaoInstance %q not found on the platform cluster", pe.Spec.OpenBaoRef.Name))
+		return r.patchStatus(ctx, pe, cfg)
+	}
+	pe.Status.ResolvedOpenBaoRef = inst.Name
+
+	if !isInstanceReachable(inst) {
+		dependencyNotReady(&pe.Status.Conditions, pe.Generation,
+			openbaov1alpha1.ReasonOpenBaoUnreachable,
+			fmt.Sprintf("OpenBaoInstance %q is not reachable", inst.Name))
+		return r.patchStatus(ctx, pe, cfg)
+	}
+
+	// EntityID/GroupID would be populated here once ProjectEntity actually
+	// materialises OpenBao identity objects. For now, publishing
+	// readiness lets downstream reconcilers proceed.
+	markReady(&pe.Status.Conditions, pe.Generation)
+	return r.patchStatus(ctx, pe, cfg)
+}
+
+func (r *ProjectEntityReconciler) patchStatus(ctx context.Context, pe *openbaov1alpha1.ProjectEntity, cfg *openbaov1alpha1.ServiceConfig) (reconcile.Result, error) {
+	if err := r.OnboardingCluster.Client().Status().Update(ctx, pe); err != nil {
+		return ctrl.Result{}, fmt.Errorf("updating ProjectEntity status: %w", err)
+	}
+	return requeueResult(cfg), nil
+}
+
+// SetupWithManager registers the reconciler on the onboarding-cluster
+// manager. Cross-cluster reactivity to OpenBaoInstance changes is handled
+// by the standard requeue interval — good enough for a status-driven
+// dependency signal.
 func (r *ProjectEntityReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&openbaov1alpha1.ProjectEntity{}).
 		Named("projectentity").
+		For(&openbaov1alpha1.ProjectEntity{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 }

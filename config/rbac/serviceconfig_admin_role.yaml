@@ -1,7 +1,7 @@
 # This rule is not used by the project platform-service-openbao itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
-# Grants full permissions ('*') over openbao.open-control-plane.io.
+# Grants full permissions ('*') over openbao.open-control-plane.io serviceconfigs.
 # This role is intended for users authorized to modify roles and bindings within the cluster,
 # enabling them to delegate specific permissions to other users or groups as needed.
 
@@ -11,17 +11,17 @@ metadata:
   labels:
     app.kubernetes.io/name: platform-service-openbao
     app.kubernetes.io/managed-by: kustomize
-  name: providerconfig-admin-role
+  name: serviceconfig-admin-role
 rules:
 - apiGroups:
   - openbao.open-control-plane.io
   resources:
-  - providerconfigs
+  - serviceconfigs
   verbs:
   - '*'
 - apiGroups:
   - openbao.open-control-plane.io
   resources:
-  - providerconfigs/status
+  - serviceconfigs/status
   verbs:
   - get

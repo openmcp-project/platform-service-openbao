@@ -37,7 +37,7 @@ resources:
 - openbaoinstance_admin_role.yaml
 - openbaoinstance_editor_role.yaml
 - openbaoinstance_viewer_role.yaml
-- providerconfig_admin_role.yaml
-- providerconfig_editor_role.yaml
-- providerconfig_viewer_role.yaml
+- serviceconfig_admin_role.yaml
+- serviceconfig_editor_role.yaml
+- serviceconfig_viewer_role.yaml
 

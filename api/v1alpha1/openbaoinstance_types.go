@@ -20,38 +20,71 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// OpenBaoInstanceSpec defines the desired state of OpenBaoInstance
+// OpenBaoInstanceSpec is the cluster-scoped registration of an approved
+// OpenBao backend. Tenant resources reference an OpenBaoInstance by name
+// rather than supplying arbitrary URLs.
 type OpenBaoInstanceSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// address is the OpenBao API base URL (e.g. https://openbao.example.com).
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://.+`
+	// +required
+	Address string `json:"address"`
 
-	// foo is an example field of OpenBaoInstance. Edit openbaoinstance_types.go to remove/update
+	// caBundleRef optionally references a Secret or ConfigMap in the
+	// controller's namespace holding the PEM-encoded CA bundle used to
+	// verify OpenBao's server certificate. When unset the system trust
+	// store is used.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	CABundleRef *LocalSecretKeyRef `json:"caBundleRef,omitempty"`
+
+	// insecureSkipVerify disables TLS verification for this backend.
+	// Intended for local development only; controllers SHOULD log a warning
+	// when this is true.
+	// +optional
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+
+	// namespace is the OpenBao API namespace to scope operations to (for
+	// OpenBao deployments that use namespaces). Empty means root.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// authMountPrefix overrides the platform-wide default from
+	// ServiceConfig for auth-mount paths generated against this instance.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	AuthMountPrefix string `json:"authMountPrefix,omitempty"`
 }
 
-// OpenBaoInstanceStatus defines the observed state of OpenBaoInstance.
+// OpenBaoInstanceStatus reports reachability and discovered capabilities of
+// the registered backend. It never contains tokens or connection secrets.
 type OpenBaoInstanceStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// observedGeneration is the .metadata.generation the controller last
+	// reconciled.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// version is the reported OpenBao server version, if discovered.
+	// +optional
+	Version string `json:"version,omitempty"`
 
-	// conditions represent the current state of the OpenBaoInstance resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// initialized reflects the /sys/health `initialized` flag from the
+	// last successful probe.
+	// +optional
+	Initialized *bool `json:"initialized,omitempty"`
+
+	// sealed reflects the /sys/health `sealed` flag from the last
+	// successful probe. A sealed backend is unreachable for reconciliation
+	// purposes.
+	// +optional
+	Sealed *bool `json:"sealed,omitempty"`
+
+	// lastProbeTime is the timestamp of the most recent reachability probe.
+	// +optional
+	LastProbeTime *metav1.Time `json:"lastProbeTime,omitempty"`
+
+	// conditions describe the current state of the OpenBaoInstance. Types
+	// used: "Ready", "OpenBaoReachable".
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -60,9 +93,15 @@ type OpenBaoInstanceStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:resource:scope=Cluster,shortName=obi
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=platform"
+// +kubebuilder:printcolumn:name="Address",type=string,JSONPath=".spec.address"
+// +kubebuilder:printcolumn:name="Reachable",type=string,JSONPath=".status.conditions[?(@.type=='OpenBaoReachable')].status"
+// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=".status.version"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
-// OpenBaoInstance is the Schema for the openbaoinstances API
+// OpenBaoInstance is a cluster-scoped registration of an approved OpenBao
+// backend. Tenant resources reference it by name.
 type OpenBaoInstance struct {
 	metav1.TypeMeta `json:",inline"`
 

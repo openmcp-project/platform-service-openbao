@@ -20,38 +20,39 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// ProjectEntitySpec defines the desired state of ProjectEntity
+// ProjectEntitySpec anchors a project-level OpenBao identity to an approved
+// OpenBaoInstance. It does not itself grant access to any policy.
 type ProjectEntitySpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of ProjectEntity. Edit projectentity_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// openBaoRef selects the cluster-scoped OpenBaoInstance this project
+	// anchor lives against.
+	// +required
+	OpenBaoRef LocalObjectReference `json:"openBaoRef"`
 }
 
-// ProjectEntityStatus defines the observed state of ProjectEntity.
+// ProjectEntityStatus reports resolved identity data for the anchor.
+// Identifiers are safe to expose; no OpenBao tokens are stored here.
 type ProjectEntityStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// observedGeneration is the .metadata.generation the controller last
+	// reconciled.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// entityID is the canonical OpenBao entity ID, if the controller
+	// materialised or observed one for this anchor.
+	// +optional
+	EntityID string `json:"entityID,omitempty"`
 
-	// conditions represent the current state of the ProjectEntity resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// groupID is the canonical OpenBao group ID, if any.
+	// +optional
+	GroupID string `json:"groupID,omitempty"`
+
+	// resolvedOpenBaoRef mirrors spec.openBaoRef.Name once the referenced
+	// OpenBaoInstance is observed to exist.
+	// +optional
+	ResolvedOpenBaoRef string `json:"resolvedOpenBaoRef,omitempty"`
+
+	// conditions describe the current state of the ProjectEntity. Types
+	// used: "Ready", "DependencyReady".
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -60,8 +61,16 @@ type ProjectEntityStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=pje
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
+// +kubebuilder:printcolumn:name="OpenBao",type=string,JSONPath=".spec.openBaoRef.name"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="EntityID",type=string,JSONPath=".status.entityID"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
-// ProjectEntity is the Schema for the projectentities API
+// ProjectEntity is the project-namespace anchor for a project-level OpenBao
+// identity. It grants nothing on its own; PolicyBinding is where access is
+// actually configured.
 type ProjectEntity struct {
 	metav1.TypeMeta `json:",inline"`
 

@@ -5,28 +5,22 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
   labels:
-    openmcp.cloud/cluster: onboarding
-  name: projectentities.openbao.open-control-plane.io
+    openmcp.cloud/cluster: platform
+  name: serviceconfigs.openbao.open-control-plane.io
 spec:
   group: openbao.open-control-plane.io
   names:
-    kind: ProjectEntity
-    listKind: ProjectEntityList
-    plural: projectentities
+    kind: ServiceConfig
+    listKind: ServiceConfigList
+    plural: serviceconfigs
     shortNames:
-    - pje
-    singular: projectentity
-  scope: Namespaced
+    - obsc
+    singular: serviceconfig
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.openBaoRef.name
-      name: OpenBao
-      type: string
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
-      type: string
-    - jsonPath: .status.entityID
-      name: EntityID
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -35,9 +29,9 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          ProjectEntity is the project-namespace anchor for a project-level OpenBao
-          identity. It grants nothing on its own; PolicyBinding is where access is
-          actually configured.
+          ServiceConfig configures a running platform-service-openbao instance.
+          Installed on the platform cluster. One instance per running controller,
+          matched by --provider-name.
         properties:
           apiVersion:
             description: |-
@@ -57,31 +51,47 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of ProjectEntity
+            description: spec defines the desired state of ServiceConfig
             properties:
-              openBaoRef:
+              authMountPrefix:
                 description: |-
-                  openBaoRef selects the cluster-scoped OpenBaoInstance this project
-                  anchor lives against.
+                  authMountPrefix is prepended to deterministic per-ControlPlane auth
+                  mount paths. Trailing slashes are stripped. Empty means default.
+                maxLength: 64
+                type: string
+              platformCredentialRef:
+                description: |-
+                  platformCredentialRef optionally points at a Secret in the manager's
+                  namespace holding the OpenBao token or credential the platform
+                  controller uses to configure trust. Never surfaced in tenant status.
                 properties:
+                  key:
+                    description: key is the key within the Secret's data.
+                    minLength: 1
+                    type: string
                   name:
-                    description: name is the name of the referenced object.
-                    maxLength: 253
+                    description: name is the Secret name.
                     minLength: 1
                     type: string
                 required:
+                - key
                 - name
                 type: object
-            required:
-            - openBaoRef
+              requeueAfter:
+                description: |-
+                  requeueAfter is the default requeue interval for successful
+                  reconciles. Individual reconcilers may pick shorter intervals when
+                  observing a dependency come ready. Go duration syntax, e.g. "5m".
+                pattern: ^([0-9]+(ns|us|µs|ms|s|m|h))+$
+                type: string
             type: object
           status:
-            description: status defines the observed state of ProjectEntity
+            description: status defines the observed state of ServiceConfig
             properties:
               conditions:
                 description: |-
-                  conditions describe the current state of the ProjectEntity. Types
-                  used: "Ready", "DependencyReady".
+                  conditions describe the current state of the ServiceConfig. Types
+                  used: "Ready".
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -140,25 +150,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              entityID:
-                description: |-
-                  entityID is the canonical OpenBao entity ID, if the controller
-                  materialised or observed one for this anchor.
-                type: string
-              groupID:
-                description: groupID is the canonical OpenBao group ID, if any.
-                type: string
               observedGeneration:
                 description: |-
                   observedGeneration is the .metadata.generation the controller last
                   reconciled.
                 format: int64
                 type: integer
-              resolvedOpenBaoRef:
-                description: |-
-                  resolvedOpenBaoRef mirrors spec.openBaoRef.Name once the referenced
-                  OpenBaoInstance is observed to exist.
-                type: string
             type: object
         required:
         - spec

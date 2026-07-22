@@ -20,38 +20,63 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// ControlPlaneTrustSpec defines the desired state of ControlPlaneTrust
+// ControlPlaneTrustSpec configures the OpenBao JWT auth mount + trust for a
+// specific ControlPlane. This is the single owner of the auth mount for
+// that ControlPlane; PolicyBindings share it.
 type ControlPlaneTrustSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// projectEntityRef selects the ProjectEntity this trust belongs under.
+	// The ProjectEntity determines which OpenBaoInstance is used.
+	// +required
+	ProjectEntityRef NamespacedObjectReference `json:"projectEntityRef"`
 
-	// foo is an example field of ControlPlaneTrust. Edit controlplanetrust_types.go to remove/update
+	// controlPlaneRef selects the target ControlPlane in the same namespace
+	// as this ControlPlaneTrust. The controller uses an OpenMCP
+	// AccessRequest to obtain access to that ControlPlane's API server for
+	// issuer/JWKS discovery.
+	// +required
+	ControlPlaneRef LocalObjectReference `json:"controlPlaneRef"`
+
+	// audience is the JWT audience to require on ControlPlane
+	// ServiceAccount tokens presented to OpenBao. Empty means the
+	// controller derives a stable default from ControlPlane identity.
+	// +kubebuilder:validation:MaxLength=253
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Audience string `json:"audience,omitempty"`
 }
 
-// ControlPlaneTrustStatus defines the observed state of ControlPlaneTrust.
+// ControlPlaneTrustStatus is user-facing: ESO SecretStore configuration
+// consumes authMountPath from here.
 type ControlPlaneTrustStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// observedGeneration is the .metadata.generation the controller last
+	// reconciled.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// authMountPath is the OpenBao JWT auth mount path (without leading
+	// "auth/") owned by this ControlPlaneTrust. Stable across reconciles
+	// once assigned. This is the value users put into ESO SecretStore
+	// configuration.
+	// +optional
+	AuthMountPath string `json:"authMountPath,omitempty"`
 
-	// conditions represent the current state of the ControlPlaneTrust resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// issuer is the discovered OIDC/JWT issuer URL of the referenced
+	// ControlPlane, as configured on the auth mount.
+	// +optional
+	Issuer string `json:"issuer,omitempty"`
+
+	// audience is the audience configured on the JWT auth mount. Mirrors
+	// spec.audience once resolved.
+	// +optional
+	Audience string `json:"audience,omitempty"`
+
+	// resolvedOpenBaoInstance is the OpenBaoInstance name inherited via
+	// the ProjectEntity.
+	// +optional
+	ResolvedOpenBaoInstance string `json:"resolvedOpenBaoInstance,omitempty"`
+
+	// conditions describe the current state of the ControlPlaneTrust.
+	// Types used: "Ready", "DependencyReady", "TrustConfigured",
+	// "OpenBaoReachable".
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -60,8 +85,16 @@ type ControlPlaneTrustStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=cpt
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
+// +kubebuilder:printcolumn:name="ControlPlane",type=string,JSONPath=".spec.controlPlaneRef.name"
+// +kubebuilder:printcolumn:name="AuthMount",type=string,JSONPath=".status.authMountPath"
+// +kubebuilder:printcolumn:name="Trust",type=string,JSONPath=".status.conditions[?(@.type=='TrustConfigured')].status"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
-// ControlPlaneTrust is the Schema for the controlplanetrusts API
+// ControlPlaneTrust configures OpenBao JWT auth mount + issuer/JWKS trust
+// for a ControlPlane so its ServiceAccount tokens can log in to OpenBao.
 type ControlPlaneTrust struct {
 	metav1.TypeMeta `json:",inline"`
 

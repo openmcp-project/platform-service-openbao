@@ -4,20 +4,40 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: providerconfigs.openbao.open-control-plane.io
+  labels:
+    openmcp.cloud/cluster: onboarding
+  name: projectentities.openbao.open-control-plane.io
 spec:
   group: openbao.open-control-plane.io
   names:
-    kind: ProviderConfig
-    listKind: ProviderConfigList
-    plural: providerconfigs
-    singular: providerconfig
-  scope: Cluster
+    kind: ProjectEntity
+    listKind: ProjectEntityList
+    plural: projectentities
+    shortNames:
+    - pje
+    singular: projectentity
+  scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.openBaoRef.name
+      name: OpenBao
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .status.entityID
+      name: EntityID
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ProviderConfig is the Schema for the providerconfigs API
+        description: |-
+          ProjectEntity is the project-namespace anchor for a project-level OpenBao
+          identity. It grants nothing on its own; PolicyBinding is where access is
+          actually configured.
         properties:
           apiVersion:
             description: |-
@@ -37,27 +57,31 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of ProviderConfig
+            description: spec defines the desired state of ProjectEntity
             properties:
-              foo:
-                description: foo is an example field of ProviderConfig. Edit providerconfig_types.go
-                  to remove/update
-                type: string
+              openBaoRef:
+                description: |-
+                  openBaoRef selects the cluster-scoped OpenBaoInstance this project
+                  anchor lives against.
+                properties:
+                  name:
+                    description: name is the name of the referenced object.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+            required:
+            - openBaoRef
             type: object
           status:
-            description: status defines the observed state of ProviderConfig
+            description: status defines the observed state of ProjectEntity
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the ProviderConfig resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                  conditions describe the current state of the ProjectEntity. Types
+                  used: "Ready", "DependencyReady".
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,6 +140,25 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              entityID:
+                description: |-
+                  entityID is the canonical OpenBao entity ID, if the controller
+                  materialised or observed one for this anchor.
+                type: string
+              groupID:
+                description: groupID is the canonical OpenBao group ID, if any.
+                type: string
+              observedGeneration:
+                description: |-
+                  observedGeneration is the .metadata.generation the controller last
+                  reconciled.
+                format: int64
+                type: integer
+              resolvedOpenBaoRef:
+                description: |-
+                  resolvedOpenBaoRef mirrors spec.openBaoRef.Name once the referenced
+                  OpenBaoInstance is observed to exist.
+                type: string
             type: object
         required:
         - spec

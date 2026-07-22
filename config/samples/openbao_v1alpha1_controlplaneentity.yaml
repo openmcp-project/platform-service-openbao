@@ -4,6 +4,14 @@ metadata:
   labels:
     app.kubernetes.io/name: platform-service-openbao
     app.kubernetes.io/managed-by: kustomize
-  name: controlplaneentity-sample
+  name: eso-reader
+  namespace: project-team-a--ws-prod
 spec:
-  # TODO(user): Add fields here
+  # Target ControlPlane.
+  controlPlaneRef:
+    name: prod
+  # Existing ServiceAccount inside the ControlPlane. NOT created or
+  # managed by this service; users own its lifecycle.
+  serviceAccountRef:
+    name: external-secrets
+    namespace: external-secrets

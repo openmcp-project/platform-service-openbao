@@ -4,6 +4,44 @@ metadata:
   labels:
     app.kubernetes.io/name: platform-service-openbao
     app.kubernetes.io/managed-by: kustomize
-  name: policybinding-sample
+  name: eso-reader-kv-prod
+  namespace: project-team-a--ws-prod
 spec:
-  # TODO(user): Add fields here
+  # ControlPlaneEntity in the same namespace.
+  controlPlaneEntityRef:
+    name: eso-reader
+  # Free-form name of a user-managed OpenBao policy. If the policy does
+  # not exist, this binding still reconciles: PolicyResolved surfaces as
+  # False with reason PolicyNotFound so operators see the missing policy
+  # without an admission rejection.
+  policyName: kv-prod-read
+  # Optional token TTL overrides.
+  # ttl: 30m
+  # maxTTL: 2h
+
+# ---
+# Example user-managed ESO SecretStore consuming this binding.
+# NOT created by platform-service-openbao — shown here so operators can
+# copy the status fields they need. Read from:
+#   ControlPlaneTrust.status.authMountPath  (path segment after "auth/")
+#   PolicyBinding.status.roleName           (the JWT role name)
+#   PolicyBinding.status.policyExists       (True|False|Unknown gate)
+#
+# apiVersion: external-secrets.io/v1beta1
+# kind: SecretStore
+# metadata:
+#   name: openbao-kv-prod
+#   namespace: my-app
+# spec:
+#   provider:
+#     vault:
+#       server: https://openbao.example.com
+#       path: kv-prod
+#       version: v2
+#       auth:
+#         jwt:
+#           path: <ControlPlaneTrust.status.authMountPath>
+#           role: <PolicyBinding.status.roleName>
+#           kubernetesServiceAccountToken:
+#             serviceAccountRef:
+#               name: external-secrets

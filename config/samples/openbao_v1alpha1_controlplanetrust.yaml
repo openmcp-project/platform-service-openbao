@@ -4,6 +4,16 @@ metadata:
   labels:
     app.kubernetes.io/name: platform-service-openbao
     app.kubernetes.io/managed-by: kustomize
-  name: controlplanetrust-sample
+  name: prod
+  namespace: project-team-a--ws-prod
 spec:
-  # TODO(user): Add fields here
+  # Project-level identity anchor this trust belongs under.
+  projectEntityRef:
+    name: team-a
+    namespace: project-team-a
+  # Target ControlPlane in the same namespace as this trust.
+  controlPlaneRef:
+    name: prod
+  # Optional. Empty lets the controller derive a stable default audience
+  # from ControlPlane identity.
+  # audience: openbao.example.com

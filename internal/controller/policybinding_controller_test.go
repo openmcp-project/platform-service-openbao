@@ -21,64 +21,154 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
+
+	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	openbaov1alpha1 "github.com/openmcp-project/platform-service-openbao/api/v1alpha1"
+	"github.com/openmcp-project/platform-service-openbao/internal/openbao"
 )
 
-var _ = Describe("PolicyBinding Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+// PolicyBinding is the reconciler where the two-cluster wiring, the
+// OpenBao fake, and the tri-state policy check all intersect. The tests
+// pin behaviours the spec calls out explicitly:
+//   - missing policy MUST NOT be an admission rejection; it MUST surface
+//     as a status condition (spec.md Requirement 8)
+//   - the reconciler MUST NOT create a Kubernetes Secret containing an
+//     OpenBao token (spec.md Requirement 7)
 
-		ctx := context.Background()
+var _ = Describe("PolicyBinding controller", func() {
+	var (
+		fake     *openbao.FakeClient
+		reconciler *PolicyBindingReconciler
+	)
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
-		}
-		policybinding := &openbaov1alpha1.PolicyBinding{}
+	// clientFactory returns whatever the current `fake` is. Set via a
+	// closure so BeforeEach can swap fakes without re-registering the
+	// reconciler.
+	clientFactory := OpenBaoClientFactory(func(_ context.Context, _ *openbaov1alpha1.OpenBaoInstance) (openbao.Client, error) {
+		return fake, nil
+	})
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind PolicyBinding")
-			err := k8sClient.Get(ctx, typeNamespacedName, policybinding)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &openbaov1alpha1.PolicyBinding{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
-		})
+	BeforeEach(func() {
+		fake = openbao.NewFakeClient()
+		reconciler = NewPolicyBindingReconciler(platformCluster, onboardingCluster, testProviderName)
+		reconciler.ClientFactory = clientFactory
+	})
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &openbaov1alpha1.PolicyBinding{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+	It("reports DependencyNotFound when the referenced ControlPlaneEntity is missing", func() {
+		pb := &openbaov1alpha1.PolicyBinding{}
+		pb.Namespace = "default"
+		pb.Name = "pb-missing-entity"
+		pb.Spec.ControlPlaneEntityRef.Name = "does-not-exist"
+		pb.Spec.PolicyName = "kv-prod-read"
+		Expect(onboardingK8sClient.Create(ctx, pb)).To(Succeed())
+		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), pb) })
 
-			By("Cleanup the specific resource instance PolicyBinding")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &PolicyBindingReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pb)})
+		Expect(err).NotTo(HaveOccurred())
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
+		got := &openbaov1alpha1.PolicyBinding{}
+		Expect(onboardingK8sClient.Get(ctx, client.ObjectKeyFromObject(pb), got)).To(Succeed())
+		ready := apimeta.FindStatusCondition(got.Status.Conditions, openbaov1alpha1.ConditionReady)
+		Expect(ready).NotTo(BeNil())
+		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+		Expect(ready.Reason).To(Equal(openbaov1alpha1.ReasonDependencyNotFound))
+		// spec.md Requirement 7: no token Secret should ever be created.
+		Expect(secretExistsInNamespace(onboardingK8sClient, "default")).To(BeFalse())
+	})
+
+	It("reports PolicyResolved=False with reason PolicyNotFound when the OpenBao policy is missing", func() {
+		// Wire the platform cluster with a reachable OpenBaoInstance.
+		inst := &openbaov1alpha1.OpenBaoInstance{}
+		inst.Name = "obi-policytest"
+		inst.Spec.Address = "https://openbao.example.test"
+		Expect(platformK8sClient.Create(ctx, inst)).To(Succeed())
+		DeferCleanup(func() { _ = platformK8sClient.Delete(context.Background(), inst) })
+		markInstanceReachable(inst)
+
+		// Onboarding cluster: ControlPlaneTrust that already has an auth
+		// mount + resolved instance in its status, and a
+		// ControlPlaneEntity + PolicyBinding that reference it.
+		trust := &openbaov1alpha1.ControlPlaneTrust{}
+		trust.Namespace = "default"
+		trust.Name = "trust-policytest"
+		trust.Spec.ProjectEntityRef.Name = "irrelevant-for-this-test"
+		trust.Spec.ProjectEntityRef.Namespace = "default"
+		trust.Spec.ControlPlaneRef.Name = "cp-policytest"
+		Expect(onboardingK8sClient.Create(ctx, trust)).To(Succeed())
+		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), trust) })
+		trust.Status.AuthMountPath = "openbao-default-cp-policytest-abc"
+		trust.Status.ResolvedOpenBaoInstance = "obi-policytest"
+		Expect(onboardingK8sClient.Status().Update(ctx, trust)).To(Succeed())
+		// Pre-seed the auth mount inside the fake so EnsureJWTRole can
+		// attach the role to it.
+		Expect(fake.EnsureJWTAuthMount(ctx, trust.Status.AuthMountPath)).To(Succeed())
+
+		ce := &openbaov1alpha1.ControlPlaneEntity{}
+		ce.Namespace = "default"
+		ce.Name = "ce-policytest"
+		ce.Spec.ControlPlaneRef.Name = "cp-policytest"
+		ce.Spec.ServiceAccountRef.Name = "eso-reader"
+		ce.Spec.ServiceAccountRef.Namespace = "external-secrets"
+		Expect(onboardingK8sClient.Create(ctx, ce)).To(Succeed())
+		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), ce) })
+
+		pb := &openbaov1alpha1.PolicyBinding{}
+		pb.Namespace = "default"
+		pb.Name = "pb-policytest"
+		pb.Spec.ControlPlaneEntityRef.Name = "ce-policytest"
+		pb.Spec.PolicyName = "kv-prod-read" // NOT in fake.Policies
+		Expect(onboardingK8sClient.Create(ctx, pb)).To(Succeed())
+		DeferCleanup(func() { _ = onboardingK8sClient.Delete(context.Background(), pb) })
+
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pb)})
+		Expect(err).NotTo(HaveOccurred())
+
+		got := &openbaov1alpha1.PolicyBinding{}
+		Expect(onboardingK8sClient.Get(ctx, client.ObjectKeyFromObject(pb), got)).To(Succeed())
+
+		Expect(got.Status.PolicyExists).To(Equal(openbaov1alpha1.PolicyExistenceFalse))
+		policyResolved := apimeta.FindStatusCondition(got.Status.Conditions, openbaov1alpha1.ConditionPolicyResolved)
+		Expect(policyResolved).NotTo(BeNil())
+		Expect(policyResolved.Status).To(Equal(metav1.ConditionFalse))
+		Expect(policyResolved.Reason).To(Equal(openbaov1alpha1.ReasonPolicyNotFound))
+
+		// The role was still created — this is the "one role per binding"
+		// behaviour the design mandates, independent of policy existence.
+		_, ok := fake.Role(trust.Status.AuthMountPath, got.Status.RoleName)
+		Expect(ok).To(BeTrue())
+		// spec.md Requirement 7: no token Secret was created.
+		Expect(secretExistsInNamespace(onboardingK8sClient, "default")).To(BeFalse())
 	})
 })
+
+// markInstanceReachable patches OpenBaoInstance status so isReachable()
+// returns true — the fake short-circuits Health() so the OpenBaoInstance
+// reconciler itself isn't running in these focused tests.
+func markInstanceReachable(inst *openbaov1alpha1.OpenBaoInstance) {
+	got := &openbaov1alpha1.OpenBaoInstance{}
+	Expect(platformK8sClient.Get(ctx, types.NamespacedName{Name: inst.Name}, got)).To(Succeed())
+	apimeta.SetStatusCondition(&got.Status.Conditions, metav1.Condition{
+		Type:   openbaov1alpha1.ConditionOpenBaoReachable,
+		Status: metav1.ConditionTrue,
+		Reason: openbaov1alpha1.ReasonReconciled,
+	})
+	Expect(platformK8sClient.Status().Update(ctx, got)).To(Succeed())
+}
+
+// secretExistsInNamespace is a spec-invariant probe: whenever it returns
+// true, the reconciler has violated the trust-only output contract.
+func secretExistsInNamespace(c client.Client, ns string) bool {
+	list := &corev1.SecretList{}
+	if err := c.List(context.Background(), list, client.InNamespace(ns)); err != nil {
+		return false
+	}
+	// envtest's default namespace has no auto-created secrets, so any
+	// entry here would be reconciler-created.
+	return len(list.Items) > 0
+}

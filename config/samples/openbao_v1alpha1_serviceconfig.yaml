@@ -1,0 +1,18 @@
+apiVersion: openbao.open-control-plane.io/v1alpha1
+kind: ServiceConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: platform-service-openbao
+    app.kubernetes.io/managed-by: kustomize
+  name: default
+spec:
+  # authMountPrefix is prepended to deterministic per-ControlPlane auth
+  # mount paths. Optional.
+  authMountPrefix: openbao
+  # requeueAfter is the default requeue interval for successful reconciles.
+  # requeueAfter: 5m
+  # platformCredentialRef references a Secret in the controller's namespace
+  # holding the OpenBao token used to configure trust. Never surfaced.
+  # platformCredentialRef:
+  #   name: openbao-platform-credentials
+  #   key: token
