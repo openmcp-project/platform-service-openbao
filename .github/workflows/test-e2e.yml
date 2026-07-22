@@ -1,8 +1,11 @@
 name: E2E Tests
 
+# E2E tests are disabled for now: the e2e suite does not exist yet.
+# To re-enable automatic runs, restore the push/pull_request triggers below.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
+  # push:
+  # pull_request:
 
 permissions: {}
 
