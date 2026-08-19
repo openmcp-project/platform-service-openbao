@@ -2,7 +2,7 @@
 
 OpenMCP tenants can install External Secrets Operator (ESO) in their ControlPlanes, but they still need a safe way for workloads or ESO `SecretStore` resources to authenticate to OpenBao without copying long-lived tokens into Kubernetes or asking the platform to own tenant secret policies.
 
-Issue https://github.tools.sap/openmcp/internal-backlog/issues/555 captures an older token-oriented idea. The current direction is different: `platform-service-openbao` should configure OpenBao OIDC/JWT trust so existing ServiceAccounts in tenant ControlPlanes can authenticate to OpenBao and receive short-lived OpenBao tokens at runtime. The platform service should not create user policies, manage ESO, manage tenant ServiceAccounts, store OpenBao tokens, or propagate credentials.
+An earlier internal backlog issue captured an older token-oriented idea. The current direction is different: `platform-service-openbao` should configure OpenBao OIDC/JWT trust so existing ServiceAccounts in tenant ControlPlanes can authenticate to OpenBao and receive short-lived OpenBao tokens at runtime. The platform service should not create user policies, manage ESO, manage tenant ServiceAccounts, store OpenBao tokens, or propagate credentials.
 
 ## What Changes
 
