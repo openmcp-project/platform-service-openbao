@@ -1,8 +1,10 @@
 # platform-service-openbao
-// TODO(user): Add simple overview of use/purpose
+
+A Kubernetes operator that configures OIDC/JWT trust between Open Control Plane ControlPlane ServiceAccounts and OpenBao instances, enabling workloads to authenticate using short-lived Kubernetes JWTs without ever storing or propagating OpenBao tokens.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+This project is a PlatformService for the [Open Control Plane](https://github.com/openmcp-project) ecosystem. It provides a set of CRDs (`OpenBaoInstance`, `ProjectEntity`, `ControlPlaneTrust`, `ControlPlaneEntity`, `PolicyBinding`) that allow platform operators to register approved OpenBao backends and enable project tenants to declaratively establish JWT auth trust for their ControlPlanes. The controller manages only the trust plumbing -- JWT auth mounts, JWT roles, and identity entities in OpenBao -- while policies, secret data, and downstream consumers like External Secrets Operator remain entirely user-managed. Its trust-only, multi-tenant design ensures strict isolation between projects: each ControlPlane receives its own JWT auth mount, each ServiceAccount identity is bound to exactly the policies specified by the tenant, and cross-tenant access is prevented by construction. Once trust is configured, ControlPlane workloads authenticate directly with OpenBao using standard Kubernetes ServiceAccount tokens, and the controller never observes or persists the resulting OpenBao client tokens.
 
 ## Manual acceptance testing
 
