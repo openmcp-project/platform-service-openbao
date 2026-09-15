@@ -1,5 +1,8 @@
 # platform-service-openbao
 
+> [!WARNING]
+> This project is experimental and was created as a proof of concept during a hackathon. It is not suitable for use in production environments.
+
 A Kubernetes operator that configures OIDC/JWT trust between Open Control Plane ControlPlane ServiceAccounts and OpenBao instances, enabling tools like External Secrets Operator to authenticate using short-lived Kubernetes JWTs without ever storing or propagating OpenBao tokens.
 
 ## Description
